@@ -57,11 +57,46 @@ public class ShimmerFileTransferClient {
         BluetoothSocket socket = null;
         try {
             // Create an RFCOMM socket using the well-known SPP UUID.
-            socket = device.createRfcommSocketToServiceRecord(
+            socket = device.createInsecureRfcommSocketToServiceRecord(
                     UUID.fromString("00001101-0000-1000-8000-00805F9B34FB"));
             adapter.cancelDiscovery();
-            socket.connect();
+
+            // Optionally, add a delay before connecting.
+            try {
+                Thread.sleep(1000);  // Increase delay to 1000·ms or more as needed.
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+
+            // Attempt to connect with retries.
+            boolean connected = false;
+            int attempts = 0;
+            while (!connected && attempts < 3) {
+                try {
+                    socket.connect();
+                    connected = true;
+                } catch (IOException e) {
+                    attempts++;
+                    Log.e(TAG, "Socket connect attempt " + attempts + " failed", e);
+                    try {
+                        Thread.sleep(1000);  // Wait before retrying.
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+            if (!connected) {
+                Log.e(TAG, "Unable to connect to sensor after retries");
+                return;
+            }
             Log.d(TAG, "Connected to Shimmer for file listing");
+
+            // After a successful connection, add an additional delay if needed.
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
 
             InputStream in = socket.getInputStream();
 
@@ -88,13 +123,21 @@ public class ShimmerFileTransferClient {
             // Read each file name from the stream.
             for (int i = 0; i < fileCount; i++) {
                 int nameLen = in.read();
+                Log.d(TAG, "Raw name length for file " + (i + 1) + ": " + nameLen);
                 if (nameLen == -1) {
                     throw new EOFException("Stream ended unexpectedly while reading name length");
                 }
+                if (nameLen == 0) {
+                    Log.w(TAG, "File " + (i + 1) + " has zero-length name.");
+                    fileNames.add("");
+                    continue;
+                }
                 byte[] nameBytes = readExact(in, nameLen);
                 String fileName = new String(nameBytes);
+                Log.d(TAG, "Received file name " + (i + 1) + ": '" + fileName + "'");
                 fileNames.add(fileName);
             }
+            Log.d(TAG, "Final file names list: " + fileNames);
 
             // Broadcast the file list.
             Intent listIntent = new Intent("com.example.myapplication.FILE_LIST");
