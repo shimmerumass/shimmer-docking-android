@@ -25,7 +25,6 @@ import androidx.core.content.ContextCompat;
 import java.util.ArrayList;
 
 public class MainActivity extends AppCompatActivity {
-
     private static final int PERMISSION_REQUEST_CODE = 1001;
     private static final String[] REQUIRED_PERMISSIONS = {
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -55,7 +54,7 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    // Scan results Receiver - updates device list.
+    // Scan Results Receiver - updates device list.
     private final BroadcastReceiver scanResultReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -83,6 +82,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onReceive(Context context, Intent intent) {
             int progress = intent.getIntExtra("progress", -1);
+            Log.d("MainActivity", "Progress broadcast received: " + progress + "%");
             if (progress >= 0) {
                 runOnUiThread(() -> {
                     transferProgressBar.setProgress(progress);
@@ -167,19 +167,21 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateDeviceList(ArrayList<String> devices) {
-        statusText.setText("Devices found: " + devices.size());
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_list_item_1, devices);
-        deviceListView.setAdapter(adapter);
+        runOnUiThread(() -> {
+            statusText.setText("Devices found: " + devices.size());
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                    android.R.layout.simple_list_item_1, devices);
+            deviceListView.setAdapter(adapter);
 
-        deviceListView.setOnItemClickListener((parent, view, position, id) -> {
-            String deviceInfo = devices.get(position);
-            String[] parts = deviceInfo.split(" - ");
-            if (parts.length == 2) {
-                selectedMac = parts[1];
-                Toast.makeText(this, "Selected: " + selectedMac, Toast.LENGTH_SHORT).show();
-                statusText.setText("Selected device: " + parts[0]);
-            }
+            deviceListView.setOnItemClickListener((parent, view, position, id) -> {
+                String deviceInfo = devices.get(position);
+                String[] parts = deviceInfo.split(" - ");
+                if (parts.length == 2) {
+                    selectedMac = parts[1];
+                    Toast.makeText(this, "Selected: " + selectedMac, Toast.LENGTH_SHORT).show();
+                    statusText.setText("Selected device: " + parts[0]);
+                }
+            });
         });
     }
 

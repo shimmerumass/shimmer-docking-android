@@ -7,12 +7,11 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.util.Log;
 
-import androidx.core.app.ActivityCompat;
-
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.ArrayList;
+import java.io.OutputStream;
+import java.util.Arrays;
 import java.util.UUID;
 
 import android.bluetooth.BluetoothAdapter;
@@ -23,52 +22,54 @@ public class ShimmerFileTransferClient {
     private static final String TAG = "ShimmerTransfer";
 
     // Command identifiers.
-    private static final byte LIST_FILES_COMMAND = (byte) 0xD0;
-    private static final byte FILE_LIST_RESPONSE = (byte) 0xD3;
+    private static final byte LIST_FILES_COMMAND       = (byte) 0xD0;
+    private static final byte FILE_LIST_RESPONSE       = (byte) 0xD3;
+    private static final byte TRANSFER_FILE_COMMAND    = (byte) 0xD1;
+    private static final byte READY_FOR_CHUNKS_COMMAND = (byte) 0xD2;
+    private static final byte CHUNK_DATA_ACK           = (byte) 0xD4;
+    // Shimmer-sent packets:
+    private static final byte TRANSFER_START_PACKET    = (byte) 0xFD;
+    private static final byte CHUNK_DATA_PACKET        = (byte) 0xFC;
+    private static final byte TRANSFER_END_PACKET      = (byte) 0xFE;
+
+    // Timeout and group configuration (adjust as needed)
+    private static final int CHUNK_GROUP_SIZE = 8;
+    private static final int MAX_CHUNK_SIZE   = 128;
 
     private final Context context;
+    private BluetoothSocket socket = null;
 
     public ShimmerFileTransferClient(Context ctx) {
         this.context = ctx;
     }
 
-    /**
-     * Entry point for a transfer.
-     * Currently calls listFiles() for file listing.
-     */
-    public void transfer(String macAddress) {
-        listFiles(macAddress);
-    }
+    public void transferOneFileFullFlow(String macAddress) {
+        // --- CLEAR PREVIOUS SOCKET IF EXISTS ---
+        if (socket != null) {
+            try {
+                socket.close();
+                Log.d(TAG, "Previous socket closed before starting new transfer");
+            } catch (IOException e) {
+                Log.e(TAG, "Error closing previous socket", e);
+            }
+            socket = null;
+        }
 
-    /**
-     * Sends the LIST_FILES command (0xD0) to the sensor at the given MAC address,
-     * then reads and broadcasts the file list response.
-     */
-    public void listFiles(String macAddress) {
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
-                        != PackageManager.PERMISSION_GRANTED) {
-            Log.e(TAG, "Missing BLUETOOTH_CONNECT permission. Aborting file list.");
+                context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            Log.e(TAG, "Missing BLUETOOTH_CONNECT permission. Aborting file transfer.");
             return;
         }
 
         BluetoothDevice device = adapter.getRemoteDevice(macAddress);
-        BluetoothSocket socket = null;
         try {
-            // Create an RFCOMM socket using the well-known SPP UUID.
+            // --- CREATE NEW SOCKET AND CONNECT ---
             socket = device.createInsecureRfcommSocketToServiceRecord(
                     UUID.fromString("00001101-0000-1000-8000-00805F9B34FB"));
             adapter.cancelDiscovery();
+            Thread.sleep(1000);
 
-            // Optionally, add a delay before connecting.
-            try {
-                Thread.sleep(1000);  // Increase delay to 1000·ms or more as needed.
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            }
-
-            // Attempt to connect with retries.
             boolean connected = false;
             int attempts = 0;
             while (!connected && attempts < 3) {
@@ -78,114 +79,189 @@ public class ShimmerFileTransferClient {
                 } catch (IOException e) {
                     attempts++;
                     Log.e(TAG, "Socket connect attempt " + attempts + " failed", e);
-                    try {
-                        Thread.sleep(1000);  // Wait before retrying.
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                    }
+                    Thread.sleep(1000);
                 }
             }
             if (!connected) {
                 Log.e(TAG, "Unable to connect to sensor after retries");
                 return;
             }
-            Log.d(TAG, "Connected to Shimmer for file listing");
-
-            // After a successful connection, add an additional delay if needed.
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            }
+            Log.d(TAG, "Connected to Shimmer");
+            Thread.sleep(500);
 
             InputStream in = socket.getInputStream();
+            OutputStream out = socket.getOutputStream();
 
-            // Send the LIST_FILES command.
-            socket.getOutputStream().write(new byte[]{LIST_FILES_COMMAND});
-            socket.getOutputStream().flush();
+            // --- STEP A: Send LIST_FILES_COMMAND (0xD0) ---
+            out.write(new byte[]{LIST_FILES_COMMAND});
+            out.flush();
             Log.d(TAG, "Sent LIST_FILES_COMMAND (0xD0)");
 
-            // Read header while skipping any extra 0xFF bytes.
-            byte[] responseHeader = readHeaderSkippingFF(in, 2);
-            Log.d(TAG, "Received header: " + bytesToHex(responseHeader));
-
-            byte responseCode = responseHeader[0];
-            int fileCount = responseHeader[1] & 0xFF;
-            if (responseCode != FILE_LIST_RESPONSE) {
-                Log.e(TAG, "Invalid response code. Expected: "
-                        + String.format("%02X", FILE_LIST_RESPONSE)
-                        + ", Got: " + String.format("%02X", responseCode));
+            // --- STEP B: Receive FILE_LIST_RESPONSE (0xD3) ---
+            int responseId = in.read();
+            while (responseId == 0xFF) {
+                responseId = in.read();
+            }
+            if (responseId != (FILE_LIST_RESPONSE & 0xFF)) {
+                Log.e(TAG, "Expected FILE_LIST_RESPONSE (0xD3) but got: "
+                        + String.format("%02X", responseId));
                 return;
             }
-            Log.d(TAG, "File count: " + fileCount);
-
-            ArrayList<String> fileNames = new ArrayList<>();
-            // Read each file name from the stream.
-            for (int i = 0; i < fileCount; i++) {
-                int nameLen = in.read();
-                Log.d(TAG, "Raw name length for file " + (i + 1) + ": " + nameLen);
-                if (nameLen == -1) {
-                    throw new EOFException("Stream ended unexpectedly while reading name length");
-                }
-                if (nameLen == 0) {
-                    Log.w(TAG, "File " + (i + 1) + " has zero-length name.");
-                    fileNames.add("");
-                    continue;
-                }
-                byte[] nameBytes = readExact(in, nameLen);
-                String fileName = new String(nameBytes);
-                Log.d(TAG, "Received file name " + (i + 1) + ": '" + fileName + "'");
-                fileNames.add(fileName);
+            int fileCount = in.read() & 0xFF;
+            Log.d(TAG, "FILE_LIST_RESPONSE: File count = " + fileCount);
+            if (fileCount <= 0) {
+                Log.e(TAG, "No files available for transfer");
+                return;
             }
-            Log.d(TAG, "Final file names list: " + fileNames);
 
-            // Broadcast the file list.
-            Intent listIntent = new Intent("com.example.myapplication.FILE_LIST");
-            listIntent.putStringArrayListExtra("files", fileNames);
-            listIntent.setPackage(context.getPackageName());
-            Log.d(TAG, "Broadcasting file list: " + fileNames);
-            context.sendBroadcast(listIntent);
+            // --- STEP C: Send TRANSFER_FILE_COMMAND (0xD1) ---
+            out.write(new byte[]{TRANSFER_FILE_COMMAND});
+            out.flush();
+            Log.d(TAG, "Sent TRANSFER_FILE_COMMAND (0xD1)");
 
-        } catch (IOException e) {
-            Log.e(TAG, "File listing error", e);
+            // --- STEP D: Wait for TRANSFER_START_PACKET (0xFD) ---
+            int startByte = in.read();
+            while (startByte == 0xFF) {
+                startByte = in.read();
+            }
+            if (startByte != (TRANSFER_START_PACKET & 0xFF)) {
+                Log.e(TAG, "Expected TRANSFER_START_PACKET (0xFD) but got: "
+                        + String.format("%02X", startByte));
+                return;
+            }
+            int protocolVersion = in.read();
+            int filenameLen = in.read();
+            byte[] filenameBytes = readExact(in, filenameLen);
+            String relativeFilename = new String(filenameBytes);
+            byte[] totalSizeBytes = readExact(in, 4);
+            int totalFileSize = ((totalSizeBytes[3] & 0xFF) << 24) |
+                    ((totalSizeBytes[2] & 0xFF) << 16) |
+                    ((totalSizeBytes[1] & 0xFF) << 8) |
+                    (totalSizeBytes[0] & 0xFF);
+            byte[] chunkSizeBytes = readExact(in, 2);
+            int chunkSize = ((chunkSizeBytes[1] & 0xFF) << 8) | (chunkSizeBytes[0] & 0xFF);
+            byte[] totalChunksBytes = readExact(in, 2);
+            int totalChunks = ((totalChunksBytes[1] & 0xFF) << 8) | (totalChunksBytes[0] & 0xFF);
+
+            Log.d(TAG, "TRANSFER_START_PACKET: version=" + protocolVersion
+                    + ", filename=" + relativeFilename
+                    + ", totalSize=" + totalFileSize
+                    + ", chunkSize=" + chunkSize
+                    + ", totalChunks=" + totalChunks);
+
+            // --- STEP E: Send READY_FOR_CHUNKS_COMMAND (0xD2) ---
+            out.write(new byte[]{READY_FOR_CHUNKS_COMMAND});
+            out.flush();
+            Log.d(TAG, "Sent READY_FOR_CHUNKS_COMMAND (0xD2)");
+
+            // --- STEP F: Receive file chunks (CHUNK_DATA_PACKET, 0xFC) in groups ---
+            int currentChunk = 0;
+            int groupStartChunk = 0;
+            int chunksInGroup = 0;
+            byte[] fileBuffer = new byte[totalFileSize];
+
+            Log.d(TAG, "Entering chunk reception loop...");
+            long chunkReadStartTime = System.currentTimeMillis();
+            while (currentChunk < totalChunks) {
+                Log.d(TAG, "test within loop");
+                int packetId = in.read();
+                long now = System.currentTimeMillis();
+                if (now - chunkReadStartTime > 5000) {
+                    Log.w(TAG, "No chunk data received for 5 seconds. Waiting...");
+                    chunkReadStartTime = now; // reset timer
+                }
+                // Skip any keep-alive 0xFF packets.
+                while (packetId == 0xFF) {
+                    // Log.d(TAG, "Keep-alive packet received: 0xFF");
+                    packetId = in.read();
+                }
+                Log.d(TAG, "Chunk packet ID received: " + String.format("%02X", packetId));
+                if (packetId != (CHUNK_DATA_PACKET & 0xFF)) {
+                    Log.e(TAG, "Expected CHUNK_DATA_PACKET (0xFC) but got: " + String.format("%02X", packetId));
+                    break;
+                }
+                // Read CHUNK_DATA_PACKET details:
+                byte[] chunkNumBytes = readExact(in, 2);
+                int chunkNum = ((chunkNumBytes[0] & 0xFF) << 8) | (chunkNumBytes[1] & 0xFF);
+                Log.d(TAG, "Chunk number received: " + chunkNum);
+
+                byte[] bytesInChunkBytes = readExact(in, 2);
+                int bytesInChunk = ((bytesInChunkBytes[0] & 0xFF) << 8) | (bytesInChunkBytes[1] & 0xFF);
+                Log.d(TAG, "Bytes in chunk received: " + bytesInChunk);
+
+                // Verify chunk size
+                if (bytesInChunk > chunkSize) {
+                    Log.e(TAG, "Chunk size mismatch! Expected <= " + chunkSize + " bytes, but got " + bytesInChunk + " bytes.");
+                    break;
+                } else {
+                    Log.d(TAG, "Chunk size verified: " + bytesInChunk + " bytes (<= " + chunkSize + " bytes).");
+                }
+
+                byte[] chunkData = readExact(in, bytesInChunk);
+                Log.d(TAG, "Received CHUNK_DATA_PACKET for chunk " + chunkNum
+                        + " (" + bytesInChunk + " bytes)");
+
+                System.arraycopy(chunkData, 0, fileBuffer, chunkNum * chunkSize, bytesInChunk);
+                currentChunk++;
+                chunksInGroup++;
+
+                chunkReadStartTime = System.currentTimeMillis(); // reset timer after valid chunk
+
+                if (chunksInGroup == CHUNK_GROUP_SIZE || currentChunk == totalChunks) {
+                    byte[] ackPacket = new byte[4];
+                    ackPacket[0] = CHUNK_DATA_ACK;
+                    ackPacket[1] = (byte) ((groupStartChunk >> 8) & 0xFF);
+                    ackPacket[2] = (byte) (groupStartChunk & 0xFF);
+                    ackPacket[3] = 0x00; // ACK_SUCCESS
+                    out.write(ackPacket);
+                    out.flush();
+                    Log.d(TAG, "Sent CHUNK_DATA_ACK for group starting at chunk " + groupStartChunk);
+                    chunksInGroup = 0;
+                    groupStartChunk = currentChunk;
+                }
+
+                // Broadcast progress.
+                int progress = (currentChunk * 100) / totalChunks;
+                Log.d(TAG, "Transfer progress: " + progress + "%");
+                Intent progressIntent = new Intent("com.example.myapplication.TRANSFER_PROGRESS");
+                progressIntent.putExtra("progress", progress);
+                context.sendBroadcast(progressIntent);
+            }
+
+            // --- STEP G: Wait for TRANSFER_END_PACKET (0xFE) ---
+            int endPacketId = in.read();
+            while (endPacketId == 0xFF) {
+                endPacketId = in.read();
+            }
+            if (endPacketId != (TRANSFER_END_PACKET & 0xFF)) {
+                Log.e(TAG, "Expected TRANSFER_END_PACKET (0xFE) but got: " + String.format("%02X", endPacketId));
+            } else {
+                int transferStatus = in.read();
+                Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
+                if (transferStatus == 0x00) {
+                    Log.d(TAG, "File transfer completed successfully for file: " + relativeFilename);
+                    Intent doneIntent = new Intent("com.example.myapplication.TRANSFER_DONE");
+                    context.sendBroadcast(doneIntent);
+                } else {
+                    Log.e(TAG, "File transfer failed with status: " + String.format("%02X", transferStatus));
+                }
+            }
+        } catch (IOException | InterruptedException e) {
+            Log.e(TAG, "Error during file transfer", e);
         } finally {
+            // --- CLEANUP ---
             if (socket != null) {
                 try {
                     socket.close();
+                    Log.d(TAG, "Socket closed after file transfer operation");
                 } catch (IOException ignored) { }
+                socket = null;
             }
         }
     }
 
     /**
-     * Reads exactly expectedLen valid bytes from the InputStream,
-     * skipping any extra 0xFF bytes before the header begins.
-     */
-    private byte[] readHeaderSkippingFF(InputStream in, int expectedLen) throws IOException {
-        ArrayList<Byte> headerBytes = new ArrayList<>();
-        while (headerBytes.size() < expectedLen) {
-            int next = in.read();
-            if (next == -1) {
-                throw new EOFException("Stream ended early while reading header");
-            }
-            // Skip any 0xFF bytes until at least one valid header byte is found.
-            if (headerBytes.isEmpty() && (next & 0xFF) == 0xFF) {
-                Log.d(TAG, "Skipping extra header byte: FF");
-                continue;
-            } else {
-                headerBytes.add((byte) next);
-            }
-        }
-        // Convert ArrayList<Byte> to byte[]
-        byte[] header = new byte[expectedLen];
-        for (int i = 0; i < expectedLen; i++) {
-            header[i] = headerBytes.get(i);
-        }
-        return header;
-    }
-
-    /**
-     * Reads exactly len bytes from the given InputStream.
+     * Reads exactly len bytes from the InputStream.
      */
     private byte[] readExact(InputStream in, int len) throws IOException {
         byte[] buffer = new byte[len];
@@ -200,14 +276,7 @@ public class ShimmerFileTransferClient {
         return buffer;
     }
 
-    /**
-     * Helper method to convert a byte array to a hex string.
-     */
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02X ", b));
-        }
-        return sb.toString().trim();
+    public void transfer(String macAddress) {
+        transferOneFileFullFlow(macAddress);
     }
 }
