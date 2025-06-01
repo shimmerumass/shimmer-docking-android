@@ -8,6 +8,9 @@ import android.os.Build;
 import android.util.Log;
 
 import java.io.EOFException;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -160,75 +163,56 @@ public class ShimmerFileTransferClient {
             int chunksInGroup = 0;
             byte[] fileBuffer = new byte[totalFileSize];
 
+            File binaryFile = new File(context.getFilesDir(), "response_data.bin");
+        File textFile = new File(context.getFilesDir(), "response_data.txt");
+
+        try (
+            FileOutputStream binaryWriter = new FileOutputStream(binaryFile, true);
+            FileWriter textWriter = new FileWriter(textFile, true)  // append mode
+        ) {
             Log.d(TAG, "Entering chunk reception loop...");
-            long chunkReadStartTime = System.currentTimeMillis();
-            while (currentChunk < totalChunks) {
-                Log.d(TAG, "test within loop");
+            int chunksProcessed = 0;
+            while (chunksProcessed < 8) {
                 int packetId = in.read();
-                long now = System.currentTimeMillis();
-                if (now - chunkReadStartTime > 5000) {
-                    Log.w(TAG, "No chunk data received for 5 seconds. Waiting...");
-                    chunkReadStartTime = now; // reset timer
-                }
-                // Skip any keep-alive 0xFF packets.
                 while (packetId == 0xFF) {
-                    // Log.d(TAG, "Keep-alive packet received: 0xFF");
-                    packetId = in.read();
+                    packetId = in.read(); // Skip 0xFF
                 }
-                Log.d(TAG, "Chunk packet ID received: " + String.format("%02X", packetId));
+
                 if (packetId != (CHUNK_DATA_PACKET & 0xFF)) {
-                    Log.e(TAG, "Expected CHUNK_DATA_PACKET (0xFC) but got: " + String.format("%02X", packetId));
-                    break;
+                    Log.w(TAG, "Unexpected header packet received: " + String.format("%02X", packetId));
+                    return;
                 }
-                // Read CHUNK_DATA_PACKET details:
+
                 byte[] chunkNumBytes = readExact(in, 2);
-                int chunkNum = ((chunkNumBytes[0] & 0xFF) << 8) | (chunkNumBytes[1] & 0xFF);
-                Log.d(TAG, "Chunk number received: " + chunkNum);
+                byte[] totalBytes = readExact(in, 2);
+                byte[] chunkData = readExact(in, 240);
 
-                byte[] bytesInChunkBytes = readExact(in, 2);
-                int bytesInChunk = ((bytesInChunkBytes[0] & 0xFF) << 8) | (bytesInChunkBytes[1] & 0xFF);
-                Log.d(TAG, "Bytes in chunk received: " + bytesInChunk);
+                byte[] fullPacket = new byte[245];
+                fullPacket[0] = (byte) packetId;
+                System.arraycopy(chunkNumBytes, 0, fullPacket, 1, 2);
+                System.arraycopy(totalBytes, 0, fullPacket, 3, 2);
+                System.arraycopy(chunkData, 0, fullPacket, 5, 240);
 
-                // Verify chunk size
-                if (bytesInChunk > chunkSize) {
-                    Log.e(TAG, "Chunk size mismatch! Expected <= " + chunkSize + " bytes, but got " + bytesInChunk + " bytes.");
-                    break;
-                } else {
-                    Log.d(TAG, "Chunk size verified: " + bytesInChunk + " bytes (<= " + chunkSize + " bytes).");
+                // Write binary data
+                binaryWriter.write(fullPacket);
+
+                // Write hex representation to text file (one line)
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < fullPacket.length; i++) {
+                    sb.append(String.format("%02X ", fullPacket[i]));
                 }
+                textWriter.write(sb.toString().trim() + "\n");
 
-                byte[] chunkData = readExact(in, bytesInChunk);
-                Log.d(TAG, "Received CHUNK_DATA_PACKET for chunk " + chunkNum
-                        + " (" + bytesInChunk + " bytes)");
-
-                System.arraycopy(chunkData, 0, fileBuffer, chunkNum * chunkSize, bytesInChunk);
-                currentChunk++;
-                chunksInGroup++;
-
-                chunkReadStartTime = System.currentTimeMillis(); // reset timer after valid chunk
-
-                if (chunksInGroup == CHUNK_GROUP_SIZE || currentChunk == totalChunks) {
-                    byte[] ackPacket = new byte[4];
-                    ackPacket[0] = CHUNK_DATA_ACK;
-                    ackPacket[1] = (byte) ((groupStartChunk >> 8) & 0xFF);
-                    ackPacket[2] = (byte) (groupStartChunk & 0xFF);
-                    ackPacket[3] = 0x00; // ACK_SUCCESS
-                    out.write(ackPacket);
-                    out.flush();
-                    Log.d(TAG, "Sent CHUNK_DATA_ACK for group starting at chunk " + groupStartChunk);
-                    chunksInGroup = 0;
-                    groupStartChunk = currentChunk;
-                }
-
-                // Broadcast progress.
-                int progress = (currentChunk * 100) / totalChunks;
-                Log.d(TAG, "Transfer progress: " + progress + "%");
-                Intent progressIntent = new Intent("com.example.myapplication.TRANSFER_PROGRESS");
-                progressIntent.putExtra("progress", progress);
-                context.sendBroadcast(progressIntent);
+                chunksProcessed++;
             }
+            Log.d(TAG, "Processed 8 chunks and saved to binary and text files.");
+        } catch (IOException e) {
+            Log.e(TAG, "Error saving chunks", e);
+        }
 
-            // --- STEP G: Wait for TRANSFER_END_PACKET (0xFE) ---
+        Log.d(TAG, "Response file path: " + binaryFile.getAbsolutePath());
+
+        // --- STEP G: Wait for TRANSFER_END_PACKET (0xFE) ---
             int endPacketId = in.read();
             while (endPacketId == 0xFF) {
                 endPacketId = in.read();
@@ -262,6 +246,7 @@ public class ShimmerFileTransferClient {
 
     /**
      * Reads exactly len bytes from the InputStream.
+     * Handles large data sizes efficiently.
      */
     private byte[] readExact(InputStream in, int len) throws IOException {
         byte[] buffer = new byte[len];
