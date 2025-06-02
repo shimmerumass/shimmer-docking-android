@@ -8,6 +8,7 @@ import android.util.Log;
 
 import java.io.EOFException;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
@@ -155,19 +156,9 @@ public class ShimmerFileTransferClient {
                 Log.d(TAG, "Sent READY_FOR_CHUNKS_COMMAND (0xD2)");
 
                 // Receive file chunks
-                File textFile = new File(context.getFilesDir(), relativeFilename + ".txt");
-                File parentDir = textFile.getParentFile();
-                if (parentDir != null && !parentDir.exists()) {
-                    if (parentDir.mkdirs()) {
-                        Log.d(TAG, "Created directories: " + parentDir.getAbsolutePath());
-                    } else {
-                        Log.e(TAG, "Failed to create directories: " + parentDir.getAbsolutePath());
-                        return; // Abort if directories cannot be created
-                    }
-                }
-
-                try (FileWriter textWriter = new FileWriter(textFile)) {
-                    Log.d(TAG, "File created successfully: " + textFile.getAbsolutePath());
+                File outputFile = new File(context.getFilesDir(), relativeFilename); // Save as original file format
+                try (FileWriter textWriter = new FileWriter(outputFile)) {
+                    Log.d(TAG, "File created successfully: " + outputFile.getAbsolutePath());
                     Log.d(TAG, "Receiving chunks...");
 
                     int chunksProcessed = 0;
@@ -185,10 +176,6 @@ public class ShimmerFileTransferClient {
                         boolean chunksAreValid = true; // Flag to track if chunks are valid
 
                         for (int i = 0; i < chunksToRead; i++) {
-                            // Log available bytes in the stream
-                            int availableBytes = in.available();
-                            Log.d(TAG, "Available bytes in stream: " + availableBytes);
-
                             int packetId = in.read();
                             while (packetId == 0xFF) {
                                 packetId = in.read(); // Skip 0xFF
@@ -206,18 +193,14 @@ public class ShimmerFileTransferClient {
                             byte[] totalBytes = readExact(in, 2);
                             byte[] chunkData = readExact(in, MAX_CHUNK_SIZE);
 
-                            byte[] fullPacket = new byte[245];
-                            fullPacket[0] = (byte) packetId;
-                            System.arraycopy(chunkNumBytes, 0, fullPacket, 1, 2);
-                            System.arraycopy(totalBytes, 0, fullPacket, 3, 2);
-                            System.arraycopy(chunkData, 0, fullPacket, 5, MAX_CHUNK_SIZE);
-
-                            // Write hex string to file for debugging
-                            StringBuilder chunkLine = new StringBuilder();
-                            for (byte b : fullPacket) {
-                                chunkLine.append(String.format("%02X ", b));
+                            // Convert chunk data to text and write to file
+                            for (byte b : chunkData) {
+                                if (b >= 32 && b <= 126) { // Printable ASCII range
+                                    textWriter.write((char) b); // Write as text
+                                } else {
+                                    textWriter.write("."); // Replace non-printable characters with '.'
+                                }
                             }
-                            textWriter.write(chunkLine.toString().trim() + "\n");
 
                             if (i == 0) {
                                 firstChunkNumBytes[0] = chunkNumBytes[0]; // LSB
@@ -227,20 +210,21 @@ public class ShimmerFileTransferClient {
                             chunksProcessed++;
                         }
 
-         
-                    byte ackStatusToSend = chunksAreValid ? (byte) 0x01 : (byte) 0x00;
-                    byte[] ackPacket = new byte[]{
-                        CHUNK_DATA_ACK,
-                        firstChunkNumBytes[0],
-                        firstChunkNumBytes[1],
-                        ackStatusToSend
-                    };
-                    out.write(ackPacket);
-                    out.flush();
-                    Log.d(TAG, "Sent ACK packet: " + String.format("%02X %02X %02X %02X",
-                            ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
-                        }
-                    
+                        // Send ACK after the final chunk group
+                        byte ackStatusToSend = chunksAreValid ? (byte) 0x01 : (byte) 0x00;
+
+                        byte[] ackPacket = new byte[]{
+                            CHUNK_DATA_ACK,
+                            firstChunkNumBytes[0],
+                            firstChunkNumBytes[1],
+                            ackStatusToSend
+                        };
+
+                        out.write(ackPacket);
+                        out.flush();
+                        Log.d(TAG, "Sent ACK packet: " + String.format("%02X %02X %02X %02X",
+                                ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
+                    }
 
                     // Expect TRANSFER_END_PACKET after the last group
                     int endPacketId = in.read();
@@ -255,17 +239,19 @@ public class ShimmerFileTransferClient {
                         Log.e(TAG, "Available bytes in stream before aborting: " + availableBytes);
 
                         // Write available bytes to the same file using the existing textWriter
-                        textWriter.write("Available bytes in stream before aborting: " + availableBytes + "\n");
+                        try (FileWriter debugWriter = new FileWriter(new File(context.getFilesDir(), "debug_log.txt"), true)) {
+                            debugWriter.write("Available bytes in stream before aborting: " + availableBytes + "\n");
 
-                        // Read and write the actual bytes available in the stream
-                        byte[] debugBytes = new byte[availableBytes];
-                        int bytesRead = in.read(debugBytes);
-                        if (bytesRead > 0) {
-                            StringBuilder debugData = new StringBuilder("Bytes in stream: ");
-                            for (byte b : debugBytes) {
-                                debugData.append(String.format("%02X ", b));
+                            // Read and write the actual bytes available in the stream
+                            byte[] debugBytes = new byte[availableBytes];
+                            int bytesRead = in.read(debugBytes);
+                            if (bytesRead > 0) {
+                                StringBuilder debugData = new StringBuilder("Bytes in stream: ");
+                                for (byte b : debugBytes) {
+                                    debugData.append(String.format("%02X ", b));
+                                }
+                                debugWriter.write(debugData.toString().trim() + "\n");
                             }
-                            textWriter.write(debugData.toString().trim() + "\n");
                         }
 
                         return;
