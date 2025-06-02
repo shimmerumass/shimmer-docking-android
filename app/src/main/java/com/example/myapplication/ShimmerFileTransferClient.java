@@ -185,6 +185,10 @@ public class ShimmerFileTransferClient {
                         boolean chunksAreValid = true; // Flag to track if chunks are valid
 
                         for (int i = 0; i < chunksToRead; i++) {
+                            // Log available bytes in the stream
+                            int availableBytes = in.available();
+                            Log.d(TAG, "Available bytes in stream: " + availableBytes);
+
                             int packetId = in.read();
                             while (packetId == 0xFF) {
                                 packetId = in.read(); // Skip 0xFF
@@ -208,7 +212,7 @@ public class ShimmerFileTransferClient {
                             System.arraycopy(totalBytes, 0, fullPacket, 3, 2);
                             System.arraycopy(chunkData, 0, fullPacket, 5, MAX_CHUNK_SIZE);
 
-                            // Write hex string to file
+                            // Write hex string to file for debugging
                             StringBuilder chunkLine = new StringBuilder();
                             for (byte b : fullPacket) {
                                 chunkLine.append(String.format("%02X ", b));
@@ -223,19 +227,53 @@ public class ShimmerFileTransferClient {
                             chunksProcessed++;
                         }
 
-                        byte ackStatusToSend = chunksAreValid ? (byte) 0x01 : (byte) 0x00;
+         
+                    byte ackStatusToSend = chunksAreValid ? (byte) 0x01 : (byte) 0x00;
+                    byte[] ackPacket = new byte[]{
+                        CHUNK_DATA_ACK,
+                        firstChunkNumBytes[0],
+                        firstChunkNumBytes[1],
+                        ackStatusToSend
+                    };
+                    out.write(ackPacket);
+                    out.flush();
+                    Log.d(TAG, "Sent ACK packet: " + String.format("%02X %02X %02X %02X",
+                            ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
+                        }
+                    
 
-                        byte[] ackPacket = new byte[]{
-                            CHUNK_DATA_ACK,
-                            firstChunkNumBytes[0],
-                            firstChunkNumBytes[1],
-                            ackStatusToSend
-                        };
+                    // Expect TRANSFER_END_PACKET after the last group
+                    int endPacketId = in.read();
+                    while (endPacketId == 0xFF) {
+                        endPacketId = in.read();
+                    }
+                    if (endPacketId != (TRANSFER_END_PACKET & 0xFF)) {
+                        Log.e(TAG, "Expected TRANSFER_END_PACKET (0xFE) but got: " + String.format("%02X", endPacketId));
 
-                        out.write(ackPacket);
-                        out.flush();
-                        Log.d(TAG, "Sent ACK packet: " + String.format("%02X %02X %02X %02X",
-                                ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
+                        // Log available bytes in the stream
+                        int availableBytes = in.available();
+                        Log.e(TAG, "Available bytes in stream before aborting: " + availableBytes);
+
+                        // Write available bytes to the same file using the existing textWriter
+                        textWriter.write("Available bytes in stream before aborting: " + availableBytes + "\n");
+
+                        // Read and write the actual bytes available in the stream
+                        byte[] debugBytes = new byte[availableBytes];
+                        int bytesRead = in.read(debugBytes);
+                        if (bytesRead > 0) {
+                            StringBuilder debugData = new StringBuilder("Bytes in stream: ");
+                            for (byte b : debugBytes) {
+                                debugData.append(String.format("%02X ", b));
+                            }
+                            textWriter.write(debugData.toString().trim() + "\n");
+                        }
+
+                        return;
+                    }
+                    int transferStatus = in.read();
+                    Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
+                    if (transferStatus != 0x00) {
+                        Log.e(TAG, "File transfer failed for file: " + relativeFilename);
                     }
                 } catch (IOException e) {
                     Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
@@ -245,20 +283,6 @@ public class ShimmerFileTransferClient {
                         Log.e(TAG, "Error closing file: " + closeError.getMessage(), closeError);
                     }
                     return;
-                }
-
-                int endPacketId = in.read();
-                while (endPacketId == 0xFF) {
-                    endPacketId = in.read();
-                }
-                if (endPacketId != (TRANSFER_END_PACKET & 0xFF)) {
-                    Log.e(TAG, "Expected TRANSFER_END_PACKET (0xFE) but got: " + String.format("%02X", endPacketId));
-                    return;
-                }
-                int transferStatus = in.read();
-                Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
-                if (transferStatus != 0x00) {
-                    Log.e(TAG, "File transfer failed for file: " + relativeFilename);
                 }
             }
         } catch (IOException | InterruptedException e) {
