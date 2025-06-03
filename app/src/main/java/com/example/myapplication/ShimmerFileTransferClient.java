@@ -162,7 +162,7 @@ public class ShimmerFileTransferClient {
                 File parentDir = outputFile.getParentFile();
                 if (parentDir != null && !parentDir.exists()) {
                     if (parentDir.mkdirs()) {
-                        Log.d(TAG, "Created directories for path: " + parentDir.getAbsolutePath());
+                        Log.d(TAG, "Parent directories created: " + parentDir.getAbsolutePath());
                     } else {
                         Log.e(TAG, "Failed to create directories for path: " + parentDir.getAbsolutePath());
                         return; // Abort if directories cannot be created
@@ -170,7 +170,10 @@ public class ShimmerFileTransferClient {
                 }
 
                 // Create the file
-                try (FileWriter textWriter = new FileWriter(outputFile)) {
+                File debugFile = new File(context.getFilesDir(), "debug_log.txt");
+                try (FileWriter textWriter = new FileWriter(outputFile);
+                     FileWriter debugWriter = new FileWriter(debugFile, true)) {
+
                     Log.d(TAG, "File created successfully: " + outputFile.getAbsolutePath());
                     Log.d(TAG, "Receiving chunks...");
 
@@ -206,7 +209,7 @@ public class ShimmerFileTransferClient {
                             byte[] totalBytes = readExact(in, 2);
                             byte[] chunkData = readExact(in, MAX_CHUNK_SIZE);
 
-                            // Convert chunk data to text and write to file
+                            // Write ASCII-decoded data to the ASCII file
                             for (byte b : chunkData) {
                                 if (b >= 32 && b <= 126) { // Printable ASCII range
                                     textWriter.write((char) b); // Write as text
@@ -214,6 +217,16 @@ public class ShimmerFileTransferClient {
                                     textWriter.write("."); // Replace non-printable characters with '.'
                                 }
                             }
+
+                            // Write raw hexadecimal data to the debug file with header
+                            StringBuilder hexLine = new StringBuilder();
+                            hexLine.append(String.format("%02X ", packetId)); // Add header (starting with FC)
+                            hexLine.append(String.format("%02X %02X ", chunkNumBytes[0], chunkNumBytes[1])); // Add chunk number
+                            hexLine.append(String.format("%02X %02X ", totalBytes[0], totalBytes[1])); // Add total bytes
+                            for (byte b : chunkData) {
+                                hexLine.append(String.format("%02X ", b)); // Add chunk data
+                            }
+                            debugWriter.write(hexLine.toString().trim() + "\n");
 
                             if (i == 0) {
                                 firstChunkNumBytes[0] = chunkNumBytes[0]; // LSB
@@ -223,11 +236,11 @@ public class ShimmerFileTransferClient {
                             chunksProcessed++;
                         }
 
-                        // Send ACK after the final chunk group
+                        // Send ACK or NACK based on validity
                         byte ackStatusToSend = chunksAreValid ? (byte) 0x01 : (byte) 0x00;
 
                         byte[] ackPacket = new byte[]{
-                            CHUNK_DATA_ACK,
+                            chunksAreValid ? CHUNK_DATA_ACK : CHUNK_DATA_NACK, // Send ACK or NACK
                             firstChunkNumBytes[0],
                             firstChunkNumBytes[1],
                             ackStatusToSend
@@ -235,8 +248,15 @@ public class ShimmerFileTransferClient {
 
                         out.write(ackPacket);
                         out.flush();
-                        Log.d(TAG, "Sent ACK packet: " + String.format("%02X %02X %02X %02X",
+                        Log.d(TAG, "Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet: " + String.format("%02X %02X %02X %02X",
                                 ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
+
+                        // Restart transfer if chunks are invalid
+                        if (!chunksAreValid) {
+                            Log.e(TAG, "Chunks are invalid. Restarting transfer...");
+                            transferOneFileFullFlow(macAddress); // Restart the transfer
+                            return;
+                        }
                     }
 
                     // Expect TRANSFER_END_PACKET after the last group
@@ -246,16 +266,22 @@ public class ShimmerFileTransferClient {
                     }
                     if (endPacketId != (TRANSFER_END_PACKET & 0xFF)) {
                         Log.e(TAG, "Expected TRANSFER_END_PACKET (0xFE) but got: " + String.format("%02X", endPacketId));
+                        return;
+                    }
+                    int transferStatus = in.read();
+                    Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
+                    if (transferStatus != 0x00) {
+                        Log.e(TAG, "File transfer failed for file: " + relativeFilename);
+                    }
+                } catch (IOException e) {
+                    Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
 
-                        // Log available bytes in the stream
+                    // Log available bytes in the input stream before aborting
+                    try {
                         int availableBytes = in.available();
-                        Log.e(TAG, "Available bytes in stream before aborting: " + availableBytes);
-
-                        // Write available bytes to the same file using the existing textWriter
-                        try (FileWriter debugWriter = new FileWriter(new File(context.getFilesDir(), "debug_log.txt"), true)) {
+                        try (FileWriter debugWriter = new FileWriter(debugFile, true)) {
                             debugWriter.write("Available bytes in stream before aborting: " + availableBytes + "\n");
 
-                            // Read and write the actual bytes available in the stream
                             byte[] debugBytes = new byte[availableBytes];
                             int bytesRead = in.read(debugBytes);
                             if (bytesRead > 0) {
@@ -266,22 +292,9 @@ public class ShimmerFileTransferClient {
                                 debugWriter.write(debugData.toString().trim() + "\n");
                             }
                         }
-
-                        return;
+                    } catch (IOException streamError) {
+                        Log.e(TAG, "Error reading available bytes: " + streamError.getMessage(), streamError);
                     }
-                    int transferStatus = in.read();
-                    Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
-                    if (transferStatus != 0x00) {
-                        Log.e(TAG, "File transfer failed for file: " + relativeFilename);
-                    }
-                } catch (IOException e) {
-                    Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
-                    try {
-                        Log.d(TAG, "Closing file due to error...");
-                    } catch (Exception closeError) {
-                        Log.e(TAG, "Error closing file: " + closeError.getMessage(), closeError);
-                    }
-                    return;
                 }
             }
         } catch (IOException | InterruptedException e) {
