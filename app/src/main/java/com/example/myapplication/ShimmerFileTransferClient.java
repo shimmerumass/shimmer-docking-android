@@ -157,6 +157,19 @@ public class ShimmerFileTransferClient {
 
                 // Receive file chunks
                 File outputFile = new File(context.getFilesDir(), relativeFilename); // Save as original file format
+
+                // Ensure parent directories are created if the filename includes a path
+                File parentDir = outputFile.getParentFile();
+                if (parentDir != null && !parentDir.exists()) {
+                    if (parentDir.mkdirs()) {
+                        Log.d(TAG, "Created directories for path: " + parentDir.getAbsolutePath());
+                    } else {
+                        Log.e(TAG, "Failed to create directories for path: " + parentDir.getAbsolutePath());
+                        return; // Abort if directories cannot be created
+                    }
+                }
+
+                // Create the file
                 try (FileWriter textWriter = new FileWriter(outputFile)) {
                     Log.d(TAG, "File created successfully: " + outputFile.getAbsolutePath());
                     Log.d(TAG, "Receiving chunks...");
