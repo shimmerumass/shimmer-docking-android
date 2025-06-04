@@ -64,4 +64,13 @@
             android:layout_height="wrap_content"
             android:text="Start Transfer" />
     </LinearLayout>
+
+    <!-- Add Crash Button -->
+    <Button
+        android:id="@+id/crashButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Force Crash"
+        android:layout_gravity="center"
+        android:layout_marginTop="16dp" />
 </LinearLayout>

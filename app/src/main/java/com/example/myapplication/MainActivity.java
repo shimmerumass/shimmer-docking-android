@@ -9,6 +9,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.StrictMode;
 import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -21,6 +22,9 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import com.google.firebase.analytics.FirebaseAnalytics;
+import com.google.firebase.crashlytics.FirebaseCrashlytics;
 
 import java.util.ArrayList;
 
@@ -39,6 +43,9 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar transferProgressBar;
 
     private String selectedMac = null;
+
+    // Firebase Analytics instance
+    private FirebaseAnalytics firebaseAnalytics;
 
     // Timer Receiver - updates UI with remaining scan time or device info.
     private final BroadcastReceiver timerReceiver = new BroadcastReceiver() {
@@ -98,6 +105,31 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        // Initialize Firebase Analytics
+        firebaseAnalytics = FirebaseAnalytics.getInstance(this);
+
+        // Enable Crashlytics
+        FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(true);
+
+        // Log a custom message to Crashlytics
+        FirebaseCrashlytics.getInstance().log("MainActivity started");
+
+        // Log custom event for screen view
+        Bundle bundle = new Bundle();
+        bundle.putString("custom_event", "MainActivity");
+        firebaseAnalytics.logEvent("custom_event", bundle);
+        firebaseAnalytics.logEvent("custom_event", null);
+
+        // StrictMode policy settings
+        StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder()
+                .detectAll()
+                .penaltyLog()
+                .build());
+        StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
+                .detectAll()
+                .penaltyLog()
+                .build());
+
         timerText = findViewById(R.id.timerText);
         statusText = findViewById(R.id.statusText);
         deviceListView = findViewById(R.id.deviceListView);
@@ -123,6 +155,11 @@ public class MainActivity extends AppCompatActivity {
                 startService(transferIntent);
             }
             Toast.makeText(this, "Transfer started", Toast.LENGTH_SHORT).show();
+        });
+
+        Button crashButton = findViewById(R.id.crashButton);
+        crashButton.setOnClickListener(v -> {
+            throw new RuntimeException("Test Crash"); // Force a crash
         });
 
         // Register receivers with export flag if needed.
@@ -199,9 +236,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           String[] permissions,
-                                           int[] grantResults) {
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         if (requestCode == PERMISSION_REQUEST_CODE) {
             boolean granted = true;
             for (int result : grantResults) {
