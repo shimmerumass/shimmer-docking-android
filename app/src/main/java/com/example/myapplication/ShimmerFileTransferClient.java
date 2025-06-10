@@ -1,13 +1,35 @@
 package com.example.myapplication;
 
 import android.Manifest;
+import android.content.BroadcastReceiver;
+import android.content.ComponentName;
+import android.content.ContentResolver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.IntentSender;
+import android.content.ServiceConnection;
+import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.res.AssetManager;
+import android.content.res.Configuration;
+import android.content.res.Resources;
+import android.database.DatabaseErrorHandler;
+import android.database.sqlite.SQLiteDatabase;
+import android.graphics.Bitmap;
+import android.graphics.drawable.Drawable;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.UserHandle;
 import android.util.Log;
 
 import java.io.EOFException;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -18,9 +40,30 @@ import java.util.UUID;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
+import android.os.Bundle;
+import android.view.Display;
 
-public class ShimmerFileTransferClient {
-    private static final String TAG = "ShimmerTransfer";
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import com.google.firebase.analytics.FirebaseAnalytics;
+import com.google.firebase.crashlytics.FirebaseCrashlytics;
+
+public class ShimmerFileTransferClient{
+    private static final String TAG = "ShimmerTransfer"; // General Logcat tag
+    private static final String FIREBASE_TAG = "FirebaseLogs"; // Firebase-specific Logcat tag
+    private FirebaseAnalytics firebaseAnalytics;
+    private FirebaseCrashlytics crashlytics;
+
+    private final Context context;
+    private BluetoothSocket socket = null;
+
+    // Constructor
+    public ShimmerFileTransferClient(Context context) {
+        this.context = context;
+        firebaseAnalytics = FirebaseAnalytics.getInstance(context.getApplicationContext());
+        crashlytics = FirebaseCrashlytics.getInstance();
+    }
 
     // Command identifiers
     private static final byte LIST_FILES_COMMAND       = (byte) 0xD0;
@@ -28,7 +71,7 @@ public class ShimmerFileTransferClient {
     private static final byte TRANSFER_FILE_COMMAND    = (byte) 0xD1;
     private static final byte READY_FOR_CHUNKS_COMMAND = (byte) 0xD2;
     private static final byte CHUNK_DATA_ACK           = (byte) 0xD4;
-    private static final byte CHUNK_DATA_NACK          = (byte) 0xD5; // Added for error handling
+    private static final byte CHUNK_DATA_NACK          = (byte) 0xD5;
     private static final byte TRANSFER_START_PACKET    = (byte) 0xFD;
     private static final byte CHUNK_DATA_PACKET        = (byte) 0xFC;
     private static final byte TRANSFER_END_PACKET      = (byte) 0xFE;
@@ -37,14 +80,16 @@ public class ShimmerFileTransferClient {
     private static final int CHUNK_GROUP_SIZE = 8;
     private static final int MAX_CHUNK_SIZE   = 240;
 
-    private final Context context;
-    private BluetoothSocket socket = null;
-
-    public ShimmerFileTransferClient(Context ctx) {
-        this.context = ctx;
-    }
-
     public void transferOneFileFullFlow(String macAddress) {
+        // Log the start of the file transfer
+        Log.d(TAG, "Starting file transfer for MAC address: " + macAddress);
+        Log.d(FIREBASE_TAG, "Logging file transfer start to Firebase for MAC address: " + macAddress);
+        crashlytics.log("File transfer started for MAC address: " + macAddress);
+
+        Bundle startBundle = new Bundle();
+        startBundle.putString("mac_address", macAddress);
+        firebaseAnalytics.logEvent("file_transfer_started", startBundle);
+
         try {
             // --- STEP 1: Establish Bluetooth Connection ---
             if (socket != null) {
@@ -53,14 +98,17 @@ public class ShimmerFileTransferClient {
                     Log.d(TAG, "Previous socket closed before starting new transfer");
                 } catch (IOException e) {
                     Log.e(TAG, "Error closing previous socket", e);
+                    crashlytics.recordException(e);
                 }
                 socket = null;
             }
+            
 
             BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                     context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 Log.e(TAG, "Missing BLUETOOTH_CONNECT permission. Aborting file transfer.");
+                crashlytics.log("Missing BLUETOOTH_CONNECT permission. Aborting file transfer.");
                 return;
             }
 
@@ -79,15 +127,18 @@ public class ShimmerFileTransferClient {
                 } catch (IOException e) {
                     attempts++;
                     Log.e(TAG, "Socket connect attempt " + attempts + " failed", e);
+                    crashlytics.log("Socket connect attempt " + attempts + " failed");
+                    crashlytics.recordException(e);
                     Thread.sleep(1000);
                 }
             }
             if (!connected) {
                 Log.e(TAG, "Unable to connect to sensor after retries");
+                crashlytics.log("Unable to connect to sensor after retries");
                 return;
             }
             Log.d(TAG, "Connected to Shimmer");
-            Thread.sleep(500);
+            crashlytics.log("Connected to Shimmer");
 
             InputStream in = socket.getInputStream();
             OutputStream out = socket.getOutputStream();
@@ -96,6 +147,7 @@ public class ShimmerFileTransferClient {
             out.write(new byte[]{LIST_FILES_COMMAND});
             out.flush();
             Log.d(TAG, "Sent LIST_FILES_COMMAND (0xD0)");
+            crashlytics.log("Sent LIST_FILES_COMMAND (0xD0)");
 
             int responseId = in.read();
             while (responseId == 0xFF) {
@@ -103,17 +155,29 @@ public class ShimmerFileTransferClient {
             }
             if (responseId != (FILE_LIST_RESPONSE & 0xFF)) {
                 Log.e(TAG, "Expected FILE_LIST_RESPONSE (0xD3) but got: " + String.format("%02X", responseId));
+                crashlytics.log("Expected FILE_LIST_RESPONSE (0xD3) but got: " + String.format("%02X", responseId));
                 return;
             }
             int fileCount = in.read() & 0xFF;
             Log.d(TAG, "FILE_LIST_RESPONSE: File count = " + fileCount);
+            crashlytics.log("FILE_LIST_RESPONSE: File count = " + fileCount);
             if (fileCount <= 0) {
                 Log.e(TAG, "No files available for transfer");
+                crashlytics.log("No files available for transfer");
                 return;
             }
 
             // --- STEP 3: Transfer Each File ---
             for (int fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+                Log.d(TAG, "Processing file index: " + fileIndex);
+                Log.d(FIREBASE_TAG, "Logging file processing start to Firebase for file index: " + fileIndex);
+                crashlytics.log("Processing file index: " + fileIndex);
+
+                Bundle fileStartBundle = new Bundle();
+                fileStartBundle.putString("mac_address", macAddress);
+                fileStartBundle.putInt("file_index", fileIndex);
+                firebaseAnalytics.logEvent("file_processing_started", fileStartBundle);
+
                 // Send TRANSFER_FILE_COMMAND
                 out.write(new byte[]{TRANSFER_FILE_COMMAND});
                 out.flush();
@@ -251,6 +315,13 @@ public class ShimmerFileTransferClient {
                         Log.d(TAG, "Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet: " + String.format("%02X %02X %02X %02X",
                                 ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
 
+                        // Log progress to Firebase
+                        Bundle progressBundle = new Bundle();
+                        progressBundle.putString("mac_address", macAddress);
+                        progressBundle.putInt("chunks_processed", chunksProcessed);
+                        progressBundle.putInt("total_chunks", totalChunks);
+                        firebaseAnalytics.logEvent("file_transfer_progress", progressBundle);
+
                         // Restart transfer if chunks are invalid
                         if (!chunksAreValid) {
                             Log.e(TAG, "Chunks are invalid. Restarting transfer...");
@@ -258,6 +329,7 @@ public class ShimmerFileTransferClient {
                             return;
                         }
                     }
+                
 
                     // Expect TRANSFER_END_PACKET after the last group
                     int endPacketId = in.read();
@@ -272,9 +344,15 @@ public class ShimmerFileTransferClient {
                     Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
                     if (transferStatus != 0x00) {
                         Log.e(TAG, "File transfer failed for file: " + relativeFilename);
+                    } else {
+                        Log.d(TAG, "Transfer completed successfully.");
+                        Bundle successBundle = new Bundle();
+                        successBundle.putString("mac_address", macAddress);
+                        firebaseAnalytics.logEvent("file_transfer_success", successBundle);
                     }
                 } catch (IOException e) {
                     Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
+                    crashlytics.recordException(e);
 
                     // Log available bytes in the input stream before aborting
                     try {
@@ -298,13 +376,29 @@ public class ShimmerFileTransferClient {
                 }
             }
         } catch (IOException | InterruptedException e) {
-            Log.e(TAG, "Error during file transfer", e);
+            Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
+            crashlytics.log("Error during file transfer: " + e.getMessage());
+            crashlytics.recordException(e);
+
+            Bundle transferErrorBundle = new Bundle();
+            transferErrorBundle.putString("mac_address", macAddress);
+            transferErrorBundle.putString("error_message", e.getMessage());
+            firebaseAnalytics.logEvent("file_transfer_error", transferErrorBundle);
         } finally {
+            Log.d(TAG, "File transfer completed for MAC address: " + macAddress);
+            Log.d(FIREBASE_TAG, "Logging file transfer completion to Firebase for MAC address: " + macAddress);
+            crashlytics.log("File transfer completed for MAC address: " + macAddress);
+
+            Bundle endBundle = new Bundle();
+            endBundle.putString("mac_address", macAddress);
+            firebaseAnalytics.logEvent("file_transfer_completed", endBundle);
+
             if (socket != null) {
                 try {
                     socket.close();
                     Log.d(TAG, "Socket closed after file transfer operation");
                 } catch (IOException ignored) {
+                    crashlytics.log("Error closing socket after file transfer");
                 }
                 socket = null;
             }
@@ -327,4 +421,5 @@ public class ShimmerFileTransferClient {
     public void transfer(String macAddress) {
         transferOneFileFullFlow(macAddress);
     }
+
 }
