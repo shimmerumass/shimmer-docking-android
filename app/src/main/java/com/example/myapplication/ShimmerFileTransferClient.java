@@ -161,6 +161,13 @@ public class ShimmerFileTransferClient{
             int fileCount = in.read() & 0xFF;
             Log.d(TAG, "FILE_LIST_RESPONSE: File count = " + fileCount);
             crashlytics.log("FILE_LIST_RESPONSE: File count = " + fileCount);
+
+            // Log file count to Firebase Analytics
+            Bundle fileCountBundle = new Bundle();
+            fileCountBundle.putString("mac_address", macAddress);
+            fileCountBundle.putInt("file_count", fileCount);
+            firebaseAnalytics.logEvent("file_count_received", fileCountBundle);
+
             if (fileCount <= 0) {
                 Log.e(TAG, "No files available for transfer");
                 crashlytics.log("No files available for transfer");
@@ -173,6 +180,7 @@ public class ShimmerFileTransferClient{
                 Log.d(FIREBASE_TAG, "Logging file processing start to Firebase for file index: " + fileIndex);
                 crashlytics.log("Processing file index: " + fileIndex);
 
+                // Log file processing start to Firebase Analytics
                 Bundle fileStartBundle = new Bundle();
                 fileStartBundle.putString("mac_address", macAddress);
                 fileStartBundle.putInt("file_index", fileIndex);
@@ -213,6 +221,21 @@ public class ShimmerFileTransferClient{
                         + ", totalSize=" + totalFileSize
                         + ", chunkSize=" + chunkSize
                         + ", totalChunks=" + totalChunks);
+
+                // Log metadata to Firebase Analytics
+                Bundle fileMetadataBundle = new Bundle();
+                fileMetadataBundle.putString("mac_address", macAddress);
+                fileMetadataBundle.putString("file_name", relativeFilename);
+                fileMetadataBundle.putInt("file_size", totalFileSize);
+                fileMetadataBundle.putInt("chunk_size", chunkSize);
+                fileMetadataBundle.putInt("total_chunks", totalChunks);
+                firebaseAnalytics.logEvent("file_metadata_received", fileMetadataBundle);
+
+                // Log metadata to Crashlytics
+                crashlytics.setCustomKey("file_name", relativeFilename);
+                crashlytics.setCustomKey("file_size", totalFileSize);
+                crashlytics.setCustomKey("chunk_size", chunkSize);
+                crashlytics.setCustomKey("total_chunks", totalChunks);
 
                 // Send READY_FOR_CHUNKS_COMMAND
                 out.write(new byte[]{READY_FOR_CHUNKS_COMMAND});
