@@ -351,27 +351,34 @@ public class ShimmerFileTransferClient{
                             transferOneFileFullFlow(macAddress); // Restart the transfer
                             return;
                         }
-                    }
-                
+                    } 
+                    if (chunksProcessed >= totalChunks) {
+                        Log.d(TAG, "Last chunk group processed. Skipping bytes until TRANSFER_END_PACKET with valid status...");
+                        int packetId;
+                        int transferStatus;
+                        while (true) {
+                            packetId = in.read();
+                            if (packetId == (TRANSFER_END_PACKET & 0xFF)) {
+                                transferStatus = in.read();
+                                Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
+                                if (transferStatus == 0x00 || transferStatus == 0x01) {
+                                    break;
+                                } else {
+                                    // If not a valid status, continue searching for the next FE
+                                    Log.d(TAG, "Status after FE was not 00 or 01, continuing to skip...");
+                                }
+                            }
+                        }
 
-                    // Expect TRANSFER_END_PACKET after the last group
-                    int endPacketId = in.read();
-                    while (endPacketId == 0xFF) {
-                        endPacketId = in.read();
-                    }
-                    if (endPacketId != (TRANSFER_END_PACKET & 0xFF)) {
-                        Log.e(TAG, "Expected TRANSFER_END_PACKET (0xFE) but got: " + String.format("%02X", endPacketId));
-                        return;
-                    }
-                    int transferStatus = in.read();
-                    Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
-                    if (transferStatus != 0x00) {
-                        Log.e(TAG, "File transfer failed for file: " + relativeFilename);
-                    } else {
-                        Log.d(TAG, "Transfer completed successfully.");
-                        Bundle successBundle = new Bundle();
-                        successBundle.putString("mac_address", macAddress);
-                        firebaseAnalytics.logEvent("file_transfer_success", successBundle);
+                        // (existing status handling/logging)
+                        if (transferStatus == 0x01) {
+                            Log.d(TAG, "Transfer completed successfully.");
+                            Bundle successBundle = new Bundle();
+                            successBundle.putString("mac_address", macAddress);
+                            firebaseAnalytics.logEvent("file_transfer_success", successBundle);
+                        } else {
+                            Log.e(TAG, "File transfer failed for file: " + relativeFilename);
+                        }
                     }
                 } catch (IOException e) {
                     Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
