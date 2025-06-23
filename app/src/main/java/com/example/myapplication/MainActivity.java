@@ -7,6 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.StrictMode;
@@ -15,8 +16,11 @@ import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
+import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -28,7 +32,9 @@ import com.google.firebase.FirebaseApp;
 import com.google.firebase.analytics.FirebaseAnalytics;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
 
+import java.io.File;
 import java.util.ArrayList;
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE = 1001;
@@ -101,6 +107,13 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    private Button syncButton;
+    private ListView fileListView;
+    private ArrayAdapter<String> fileListAdapter;
+    private List<File> filesToUpload;
+    private List<Boolean> uploadStatus; // true = uploaded, false = not yet
+    private List<Boolean> uploading;    // true = uploading, false = idle
+
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -165,6 +178,12 @@ public class MainActivity extends AppCompatActivity {
         crashButton.setOnClickListener(v -> {
             throw new RuntimeException("Test Crash"); // Force a crash
         });
+
+        // Add these lines:
+        syncButton = findViewById(R.id.syncButton);
+        fileListView = findViewById(R.id.fileListRecyclerView); // Use your RecyclerView if you have one, else ListView
+
+        syncButton.setOnClickListener(v -> syncFilesWithCloud());
 
         // Register receivers with export flag if needed.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -241,6 +260,72 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
         });
+    }
+
+    private void syncFilesWithCloud() {
+        ShimmerFileTransferClient client = new ShimmerFileTransferClient(this);
+
+        new Thread(() -> {
+            List<File> localUnsynced = client.getLocalUnsyncedFiles();
+            List<String> missingOnS3 = client.getMissingFilesOnS3(localUnsynced);
+
+            filesToUpload = new ArrayList<>();
+            uploadStatus = new ArrayList<>();
+            uploading = new ArrayList<>();
+            for (File f : localUnsynced) {
+                if (missingOnS3.contains(f.getName())) {
+                    filesToUpload.add(f);
+                    uploadStatus.add(false);
+                    uploading.add(false);
+                }
+            }
+
+            runOnUiThread(() -> {
+                fileListAdapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1) {
+                    @Override
+                    public int getCount() {
+                        return filesToUpload != null ? filesToUpload.size() : 0;
+                    }
+
+                    @Override
+                    public String getItem(int position) {
+                        File file = filesToUpload.get(position);
+                        if (uploadStatus.get(position)) {
+                            return "✅ " + file.getName();
+                        } else if (uploading.get(position)) {
+                            return "⏳ " + file.getName();
+                        } else {
+                            return file.getName();
+                        }
+                    }
+                };
+                fileListView.setAdapter(fileListAdapter);
+            });
+
+            for (int i = 0; i < filesToUpload.size(); i++) {
+                final int pos = i;
+                runOnUiThread(() -> {
+                    uploading.set(pos, true);
+                    fileListAdapter.notifyDataSetChanged();
+                });
+
+                boolean uploaded = client.uploadFileToS3(filesToUpload.get(pos));
+                if (uploaded) {
+                    client.markFileAsSynced(filesToUpload.get(pos));
+                    runOnUiThread(() -> {
+                        uploading.set(pos, false);
+                        uploadStatus.set(pos, true);
+                        fileListAdapter.notifyDataSetChanged();
+                    });
+                } else {
+                    runOnUiThread(() -> {
+                        uploading.set(pos, false);
+                        fileListAdapter.notifyDataSetChanged();
+                        Toast.makeText(this, "Failed to upload: " + filesToUpload.get(pos).getName(), Toast.LENGTH_SHORT).show();
+                    });
+                }
+            }
+        }).start();
     }
 
     @Override
