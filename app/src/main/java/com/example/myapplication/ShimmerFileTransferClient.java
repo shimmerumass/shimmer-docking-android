@@ -49,9 +49,17 @@ import androidx.annotation.Nullable;
 import com.google.firebase.analytics.FirebaseAnalytics;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
 
+import okhttp3.*; // Add at the top if not present
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
+
 public class ShimmerFileTransferClient{
     private static final String TAG = "ShimmerTransfer"; // General Logcat tag
     private static final String FIREBASE_TAG = "FirebaseLogs"; // Firebase-specific Logcat tag
+    private static final String SYNC_TAG = "FileSync";
     private FirebaseAnalytics firebaseAnalytics;
     private FirebaseCrashlytics crashlytics;
 
@@ -243,18 +251,15 @@ public class ShimmerFileTransferClient{
                 Log.d(TAG, "Sent READY_FOR_CHUNKS_COMMAND (0xD2)");
 
                 // Receive file chunks
-                File outputFile = new File(context.getFilesDir(), relativeFilename); // Save as original file format
-
-                // Ensure parent directories are created if the filename includes a path
-                File parentDir = outputFile.getParentFile();
-                if (parentDir != null && !parentDir.exists()) {
-                    if (parentDir.mkdirs()) {
-                        Log.d(TAG, "Parent directories created: " + parentDir.getAbsolutePath());
-                    } else {
-                        Log.e(TAG, "Failed to create directories for path: " + parentDir.getAbsolutePath());
-                        return; // Abort if directories cannot be created
-                    }
-                }
+                // Get username and timestamp ONCE per file
+                String username = android.provider.Settings.Global.getString(context.getContentResolver(), android.provider.Settings.Global.DEVICE_NAME);
+                if (username == null || username.isEmpty()) username = "user";
+                String timestamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
+                String baseName = new File(relativeFilename).getName();
+                String newFilename = username + "_" + timestamp + "_" + baseName + ".txt";
+                File dataDir = new File(context.getFilesDir(), "data");
+                if (!dataDir.exists()) dataDir.mkdirs();
+                File outputFile = new File(dataDir, newFilename);
 
                 // Create the file
                 File debugFile = new File(context.getFilesDir(), "debug_log.txt");
@@ -327,10 +332,10 @@ public class ShimmerFileTransferClient{
                         byte ackStatusToSend = chunksAreValid ? (byte) 0x01 : (byte) 0x00;
 
                         byte[] ackPacket = new byte[]{
-                            chunksAreValid ? CHUNK_DATA_ACK : CHUNK_DATA_NACK, // Send ACK or NACK
-                            firstChunkNumBytes[0],
-                            firstChunkNumBytes[1],
-                            ackStatusToSend
+                                chunksAreValid ? CHUNK_DATA_ACK : CHUNK_DATA_NACK, // Send ACK or NACK
+                                firstChunkNumBytes[0],
+                                firstChunkNumBytes[1],
+                                ackStatusToSend
                         };
 
                         out.write(ackPacket);
@@ -351,7 +356,7 @@ public class ShimmerFileTransferClient{
                             transferOneFileFullFlow(macAddress); // Restart the transfer
                             return;
                         }
-                    } 
+                    }
                     if (chunksProcessed >= totalChunks) {
                         Log.d(TAG, "Last chunk group processed. Skipping bytes until TRANSFER_END_PACKET with valid status...");
                         int packetId;
@@ -404,6 +409,17 @@ public class ShimmerFileTransferClient{
                         Log.e(TAG, "Error reading available bytes: " + streamError.getMessage(), streamError);
                     }
                 }
+
+                // ---- ADD THIS BLOCK HERE: ----
+                FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
+                SQLiteDatabase db = dbHelper.getWritableDatabase();
+                android.content.ContentValues values = new android.content.ContentValues();
+                values.put("TIMESTAMP", timestamp);
+                values.put("FILE_PATH", outputFile.getAbsolutePath());
+                values.put("SYNCED", 0);
+                db.insert("files", null, values);
+                db.close();
+                // ---- END OF BLOCK ----
             }
         } catch (IOException | InterruptedException e) {
             Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
@@ -448,8 +464,90 @@ public class ShimmerFileTransferClient{
         return buffer;
     }
 
-    public void transfer(String macAddress) {
+        public void transfer(String macAddress) {
         transferOneFileFullFlow(macAddress);
+    }
+
+
+    public List<File> getLocalUnsyncedFiles() {
+            Log.d(SYNC_TAG, "Querying local DB for unsynced files...");
+            FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
+            SQLiteDatabase db = dbHelper.getReadableDatabase();
+            List<File> unsyncedFiles = new ArrayList<>();
+            try (android.database.Cursor cursor = db.query("files", new String[]{"FILE_PATH"}, "SYNCED=0", null, null, null, null)) {
+                while (cursor.moveToNext()) {
+                    String path = cursor.getString(0);
+                    File file = new File(path);
+                    if (file.exists()) {
+                        unsyncedFiles.add(file);
+                        Log.d(SYNC_TAG, "Unsynced file: " + file.getName());
+                    }
+                }
+            }
+            db.close();
+            return unsyncedFiles;
+        }
+
+    public List<String> getMissingFilesOnS3(List<File> localFiles) {
+        Log.d(SYNC_TAG, "Checking which files are missing on S3...");
+        List<String> missing = new ArrayList<>();
+        try {
+            OkHttpClient client = new OkHttpClient();
+            JSONArray filenames = new JSONArray();
+            for (File file : localFiles) filenames.put(file.getName());
+
+            RequestBody body = RequestBody.create(filenames.toString(), MediaType.parse("application/json"));
+            Request request = new Request.Builder()
+                    .url("https://odb777ddnc.execute-api.us-east-2.amazonaws.com/missing-files/")
+                    .post(body)
+                    .build();
+
+            Response response = client.newCall(request).execute();
+            if (!response.isSuccessful()) return missing;
+            JSONObject result = new JSONObject(response.body().string());
+            JSONArray missingArr = result.getJSONArray("missing_files");
+            for (int i = 0; i < missingArr.length(); i++) {
+                missing.add(missingArr.getString(i));
+                Log.d(SYNC_TAG, "Missing on S3: " + missingArr.getString(i));
+            }
+        } catch (Exception e) {
+            Log.e(SYNC_TAG, "Error checking missing files: " + e.getMessage());
+        }
+        return missing;
+    }
+
+    public boolean uploadFileToS3(File file) {
+        Log.d(SYNC_TAG, "Uploading file: " + file.getName());
+        OkHttpClient client = new OkHttpClient();
+        RequestBody fileBody = RequestBody.create(file, MediaType.parse("text/plain"));
+        MultipartBody requestBody = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", file.getName(), fileBody)
+                .build();
+
+        Request request = new Request.Builder()
+                .url("https://odb777ddnc.execute-api.us-east-2.amazonaws.com/upload/")
+                .post(requestBody)
+                .build();
+
+        try (Response response = client.newCall(request).execute()) {
+            boolean success = response.isSuccessful();
+            Log.d(SYNC_TAG, "Upload " + (success ? "successful" : "failed") + " for: " + file.getName());
+            return success;
+        } catch (IOException e) {
+            Log.e(SYNC_TAG, "Upload failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public void markFileAsSynced(File file) {
+        Log.d(SYNC_TAG, "Marking file as synced in DB: " + file.getName());
+        FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        android.content.ContentValues values = new android.content.ContentValues();
+        values.put("SYNCED", 1);
+        db.update("files", values, "FILE_PATH=?", new String[]{file.getAbsolutePath()});
+        db.close();
     }
 
 }
