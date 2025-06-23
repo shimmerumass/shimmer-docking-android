@@ -10,6 +10,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.StrictMode;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -186,6 +187,23 @@ public class MainActivity extends AppCompatActivity {
             startScanningService();
         } else {
             ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
+        }
+
+        TextView userNameTextView = findViewById(R.id.user_name_text_view);
+
+        // Get the device name from system settings.
+        String deviceName = Settings.Global.getString(getContentResolver(), Settings.Global.DEVICE_NAME);
+
+        // Fallback if Settings.Global.DEVICE_NAME is null (older devices)
+        if (deviceName == null || deviceName.isEmpty()) {
+            deviceName = Settings.Secure.getString(getContentResolver(), "bluetooth_name");
+        }
+
+        // Display the device name in the TextView.
+        if (deviceName != null && !deviceName.isEmpty()) {
+            userNameTextView.setText("Welcome, " + deviceName + "!");
+        } else {
+            userNameTextView.setText("Welcome!");
         }
     }
 
