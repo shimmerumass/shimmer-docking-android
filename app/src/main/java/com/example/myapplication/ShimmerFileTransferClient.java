@@ -298,10 +298,15 @@ public class ShimmerFileTransferClient{
                             }
 
                             byte[] chunkNumBytes = readExact(in, 2);
-                            Log.d(TAG, "Chunk number (raw bytes): " + String.format("%02X %02X", chunkNumBytes[0], chunkNumBytes[1]) + " Timestamp: "+ LOG_TIMESTAMP);
+                           
 
                             byte[] totalBytes = readExact(in, 2);
-                            byte[] chunkData = readExact(in, MAX_CHUNK_SIZE);
+                            int chunkSizeForThisChunk = ((totalBytes[1] & 0xFF) << 8) | (totalBytes[0] & 0xFF);
+                            byte[] chunkData = readExact(in, chunkSizeForThisChunk);
+
+                             Log.d(TAG, "Chunk number (raw bytes): " + String.format("%02X %02X", chunkNumBytes[0], chunkNumBytes[1])+ 
+                                    ", Total bytes (raw bytes): " + String.format("%02X %02X", totalBytes[0], totalBytes[1]) +
+                                    ", Chunk size: " + chunkSizeForThisChunk);
 
                             // Write ASCII-decoded data to the ASCII file
                             for (byte b : chunkData) {
@@ -343,7 +348,7 @@ public class ShimmerFileTransferClient{
                         out.write(ackPacket);
                         out.flush();
                         Log.d(TAG, "Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet: " + String.format("%02X %02X %02X %02X",
-                                ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3])+" Timestamp: "+ LOG_TIMESTAMP);
+                                ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
 
                         // Log progress to Firebase
                         Bundle progressBundle = new Bundle();
@@ -472,7 +477,7 @@ public class ShimmerFileTransferClient{
 
 
     public List<File> getLocalUnsyncedFiles() {
-        Log.d(SYNC_TAG, LOG_TIMESTAMP + " Querying local DB for unsynced files...");
+        Log.d(SYNC_TAG, " Querying local DB for unsynced files...");
         FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         List<File> unsyncedFiles = new ArrayList<>();
@@ -482,7 +487,7 @@ public class ShimmerFileTransferClient{
                 File file = new File(path);
                 if (file.exists()) {
                     unsyncedFiles.add(file);
-                    Log.d(SYNC_TAG, LOG_TIMESTAMP + " Unsynced file: " + file.getName());
+                    Log.d(SYNC_TAG, " Unsynced file: " + file.getName());
                 }
             }
         }
@@ -491,7 +496,7 @@ public class ShimmerFileTransferClient{
     }
 
     public List<String> getMissingFilesOnS3(List<File> localFiles) {
-        Log.d(SYNC_TAG, LOG_TIMESTAMP + " Checking which files are missing on S3...");
+        Log.d(SYNC_TAG, " Checking which files are missing on S3...");
         List<String> missing = new ArrayList<>();
         try {
             OkHttpClient client = new OkHttpClient();
@@ -510,10 +515,10 @@ public class ShimmerFileTransferClient{
             JSONArray missingArr = result.getJSONArray("missing_files");
             for (int i = 0; i < missingArr.length(); i++) {
                 missing.add(missingArr.getString(i));
-                Log.d(SYNC_TAG, LOG_TIMESTAMP + " Missing on S3: " + missingArr.getString(i));
+                Log.d(SYNC_TAG,  " Missing on S3: " + missingArr.getString(i));
             }
         } catch (Exception e) {
-            Log.e(SYNC_TAG, LOG_TIMESTAMP + " Error checking missing files: " + e.getMessage());
+            Log.e(SYNC_TAG,  " Error checking missing files: " + e.getMessage());
         }
         return missing;
     }
