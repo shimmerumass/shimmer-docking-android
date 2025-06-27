@@ -66,6 +66,8 @@ public class ShimmerFileTransferClient{
     private final Context context;
     private BluetoothSocket socket = null;
 
+    String LOG_TIMESTAMP = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
+
     // Constructor
     public ShimmerFileTransferClient(Context context) {
         this.context = context;
@@ -296,7 +298,7 @@ public class ShimmerFileTransferClient{
                             }
 
                             byte[] chunkNumBytes = readExact(in, 2);
-                            Log.d(TAG, "Chunk number (raw bytes): " + String.format("%02X %02X", chunkNumBytes[0], chunkNumBytes[1]));
+                            Log.d(TAG, "Chunk number (raw bytes): " + String.format("%02X %02X", chunkNumBytes[0], chunkNumBytes[1]) + " Timestamp: "+ LOG_TIMESTAMP);
 
                             byte[] totalBytes = readExact(in, 2);
                             byte[] chunkData = readExact(in, MAX_CHUNK_SIZE);
@@ -341,7 +343,7 @@ public class ShimmerFileTransferClient{
                         out.write(ackPacket);
                         out.flush();
                         Log.d(TAG, "Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet: " + String.format("%02X %02X %02X %02X",
-                                ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
+                                ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3])+" Timestamp: "+ LOG_TIMESTAMP);
 
                         // Log progress to Firebase
                         Bundle progressBundle = new Bundle();
@@ -470,26 +472,26 @@ public class ShimmerFileTransferClient{
 
 
     public List<File> getLocalUnsyncedFiles() {
-            Log.d(SYNC_TAG, "Querying local DB for unsynced files...");
-            FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
-            SQLiteDatabase db = dbHelper.getReadableDatabase();
-            List<File> unsyncedFiles = new ArrayList<>();
-            try (android.database.Cursor cursor = db.query("files", new String[]{"FILE_PATH"}, "SYNCED=0", null, null, null, null)) {
-                while (cursor.moveToNext()) {
-                    String path = cursor.getString(0);
-                    File file = new File(path);
-                    if (file.exists()) {
-                        unsyncedFiles.add(file);
-                        Log.d(SYNC_TAG, "Unsynced file: " + file.getName());
-                    }
+        Log.d(SYNC_TAG, LOG_TIMESTAMP + " Querying local DB for unsynced files...");
+        FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        List<File> unsyncedFiles = new ArrayList<>();
+        try (android.database.Cursor cursor = db.query("files", new String[]{"FILE_PATH"}, "SYNCED=0", null, null, null, null)) {
+            while (cursor.moveToNext()) {
+                String path = cursor.getString(0);
+                File file = new File(path);
+                if (file.exists()) {
+                    unsyncedFiles.add(file);
+                    Log.d(SYNC_TAG, LOG_TIMESTAMP + " Unsynced file: " + file.getName());
                 }
             }
-            db.close();
-            return unsyncedFiles;
         }
+        db.close();
+        return unsyncedFiles;
+    }
 
     public List<String> getMissingFilesOnS3(List<File> localFiles) {
-        Log.d(SYNC_TAG, "Checking which files are missing on S3...");
+        Log.d(SYNC_TAG, LOG_TIMESTAMP + " Checking which files are missing on S3...");
         List<String> missing = new ArrayList<>();
         try {
             OkHttpClient client = new OkHttpClient();
@@ -508,16 +510,16 @@ public class ShimmerFileTransferClient{
             JSONArray missingArr = result.getJSONArray("missing_files");
             for (int i = 0; i < missingArr.length(); i++) {
                 missing.add(missingArr.getString(i));
-                Log.d(SYNC_TAG, "Missing on S3: " + missingArr.getString(i));
+                Log.d(SYNC_TAG, LOG_TIMESTAMP + " Missing on S3: " + missingArr.getString(i));
             }
         } catch (Exception e) {
-            Log.e(SYNC_TAG, "Error checking missing files: " + e.getMessage());
+            Log.e(SYNC_TAG, LOG_TIMESTAMP + " Error checking missing files: " + e.getMessage());
         }
         return missing;
     }
 
     public boolean uploadFileToS3(File file) {
-        Log.d(SYNC_TAG, "Uploading file: " + file.getName());
+        Log.d(SYNC_TAG, LOG_TIMESTAMP + " Uploading file: " + file.getName());
         OkHttpClient client = new OkHttpClient();
         RequestBody fileBody = RequestBody.create(file, MediaType.parse("text/plain"));
         MultipartBody requestBody = new MultipartBody.Builder()
@@ -532,16 +534,16 @@ public class ShimmerFileTransferClient{
 
         try (Response response = client.newCall(request).execute()) {
             boolean success = response.isSuccessful();
-            Log.d(SYNC_TAG, "Upload " + (success ? "successful" : "failed") + " for: " + file.getName());
+            Log.d(SYNC_TAG, LOG_TIMESTAMP + " Upload " + (success ? "successful" : "failed") + " for: " + file.getName());
             return success;
         } catch (IOException e) {
-            Log.e(SYNC_TAG, "Upload failed: " + e.getMessage());
+            Log.e(SYNC_TAG, LOG_TIMESTAMP + " Upload failed: " + e.getMessage());
             return false;
         }
     }
 
     public void markFileAsSynced(File file) {
-        Log.d(SYNC_TAG, "Marking file as synced in DB: " + file.getName());
+        Log.d(SYNC_TAG, LOG_TIMESTAMP + " Marking file as synced in DB: " + file.getName());
         FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         android.content.ContentValues values = new android.content.ContentValues();
