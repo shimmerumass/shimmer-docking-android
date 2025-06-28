@@ -1,36 +1,15 @@
 package com.example.myapplication;
 
 import android.Manifest;
-import android.content.BroadcastReceiver;
-import android.content.ComponentName;
-import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
-import android.content.IntentSender;
-import android.content.ServiceConnection;
-import android.content.SharedPreferences;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
-import android.content.res.AssetManager;
-import android.content.res.Configuration;
-import android.content.res.Resources;
-import android.database.DatabaseErrorHandler;
 import android.database.sqlite.SQLiteDatabase;
-import android.graphics.Bitmap;
-import android.graphics.drawable.Drawable;
-import android.net.Uri;
 import android.os.Build;
-import android.os.Handler;
-import android.os.Looper;
-import android.os.UserHandle;
 import android.util.Log;
 
 import java.io.EOFException;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
@@ -41,10 +20,6 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
 import android.os.Bundle;
-import android.view.Display;
-
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import com.google.firebase.analytics.FirebaseAnalytics;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
@@ -65,8 +40,6 @@ public class ShimmerFileTransferClient{
 
     private final Context context;
     private BluetoothSocket socket = null;
-
-    String LOG_TIMESTAMP = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
 
     // Constructor
     public ShimmerFileTransferClient(Context context) {
@@ -333,6 +306,11 @@ public class ShimmerFileTransferClient{
                             }
 
                             chunksProcessed++;
+                            int percent = (int) ((chunksProcessed * 100.0) / totalChunks);
+
+                            Intent progressIntent = new Intent("com.example.myapplication.TRANSFER_PROGRESS");
+                            progressIntent.putExtra("progress", percent);
+                            context.sendBroadcast(progressIntent);
                         }
 
                         // Send ACK or NACK based on validity
@@ -345,10 +323,34 @@ public class ShimmerFileTransferClient{
                                 ackStatusToSend
                         };
 
-                        out.write(ackPacket);
-                        out.flush();
-                        Log.d(TAG, "Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet: " + String.format("%02X %02X %02X %02X",
-                                ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
+                        int retryCount = 0;
+                        boolean gotResponse = false;
+                        while (retryCount < 3 && !gotResponse) {
+                            out.write(ackPacket);
+                            out.flush();
+                            Log.d(TAG,  " Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet (retry " + retryCount + "): " +
+                                    String.format("%02X %02X %02X %02X", ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
+
+                            // Wait for response with timeout
+                            long startTime = System.currentTimeMillis();
+                            while (System.currentTimeMillis() - startTime < 5000) { // 5 seconds
+                                if (in.available() > 0) {
+                                    gotResponse = true;
+                                    break;
+                                }
+                                try { Thread.sleep(100); } catch (InterruptedException ignored) {}
+                            }
+                            if (!gotResponse) {
+                                retryCount++;
+                                Log.w(TAG, " No response after ACK, resending ACK (attempt " + (retryCount+1) + ")");
+                            }
+                        }
+                        if (!gotResponse) {
+                            Log.e(TAG, " No response after 3 ACK retries, restarting file transfer process.");
+                            // Do NOT save the file, just restart the transfer
+                            transferOneFileFullFlow(macAddress);
+                            return;
+                        }
 
                         // Log progress to Firebase
                         Bundle progressBundle = new Bundle();
@@ -524,7 +526,7 @@ public class ShimmerFileTransferClient{
     }
 
     public boolean uploadFileToS3(File file) {
-        Log.d(SYNC_TAG, LOG_TIMESTAMP + " Uploading file: " + file.getName());
+        Log.d(SYNC_TAG, "Uploading file: " + file.getName());
         OkHttpClient client = new OkHttpClient();
         RequestBody fileBody = RequestBody.create(file, MediaType.parse("text/plain"));
         MultipartBody requestBody = new MultipartBody.Builder()
@@ -539,16 +541,16 @@ public class ShimmerFileTransferClient{
 
         try (Response response = client.newCall(request).execute()) {
             boolean success = response.isSuccessful();
-            Log.d(SYNC_TAG, LOG_TIMESTAMP + " Upload " + (success ? "successful" : "failed") + " for: " + file.getName());
+            Log.d(SYNC_TAG, "Upload " + (success ? "successful" : "failed") + " for: " + file.getName());
             return success;
         } catch (IOException e) {
-            Log.e(SYNC_TAG, LOG_TIMESTAMP + " Upload failed: " + e.getMessage());
+            Log.e(SYNC_TAG, "Upload failed: " + e.getMessage());
             return false;
         }
     }
 
     public void markFileAsSynced(File file) {
-        Log.d(SYNC_TAG, LOG_TIMESTAMP + " Marking file as synced in DB: " + file.getName());
+        Log.d(SYNC_TAG, "Marking file as synced in DB: " + file.getName());
         FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         android.content.ContentValues values = new android.content.ContentValues();

@@ -1,102 +1,142 @@
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="24dp">
-
-    <!-- Add this at the top of your layout -->
-    <TextView
-        android:id="@+id/user_name_text_view"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Welcome!"
-        android:textSize="22sp"
-        android:textStyle="bold"
-        android:gravity="center"
-        android:paddingBottom="16dp" />
-
-    <TextView
-        android:id="@+id/timerText"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Remaining: -- sec"
-        android:textSize="18sp"
-        android:padding="8dp" />
-
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Status"
-        android:textSize="18sp"
-        android:padding="8dp" />
-
-    <ListView
-        android:id="@+id/deviceListView"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:dividerHeight="1dp" />
-
-    <TextView
-        android:id="@+id/progressText"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Transfer Progress: 0%"
-        android:paddingTop="12dp"
-        android:textSize="16sp" />
-
-    <ProgressBar
-        android:id="@+id/transferProgressBar"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:progress="0"
-        android:max="100" />
-
-    <ListView
-        android:id="@+id/fileListRecyclerView"
-        android:layout_width="match_parent"
-        android:layout_height="200dp"
-        android:layout_marginTop="16dp"/>
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:layout_marginTop="16dp">
+        android:orientation="vertical"
+        android:padding="24dp">
 
-        <Button
-            android:id="@+id/stopServiceButton"
-            android:layout_width="wrap_content"
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/user_name_text_view"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Stop Scanning" />
+            android:text="Welcome!"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:paddingBottom="16dp" />
 
-        <Space android:layout_width="16dp" android:layout_height="wrap_content" />
-
-        <Button
-            android:id="@+id/transferButton"
-            android:layout_width="wrap_content"
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/timerText"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Start Transfer" />
+            android:text="Remaining: -- sec"
+            android:textSize="16sp"
+            android:padding="4dp" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Status"
+            android:textSize="16sp"
+            android:padding="4dp" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Available Devices"
+            android:textStyle="bold"
+            android:textSize="16sp"
+            android:paddingTop="12dp"
+            android:paddingBottom="4dp" />
+
+        <ListView
+            android:id="@+id/deviceListView"
+            android:layout_width="match_parent"
+            android:layout_height="120dp"
+            android:dividerHeight="1dp"
+            android:background="#FAFAFA"
+            android:layout_marginBottom="8dp" />
+
+        <!-- Transfer Progress Section -->
+        <LinearLayout
+            android:id="@+id/progressSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginBottom="12dp">
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/progressText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Transfer Progress: 0%"
+                android:paddingTop="8dp"
+                android:textSize="15sp" />
+
+            <com.google.android.material.progressindicator.LinearProgressIndicator
+                android:id="@+id/transferProgressBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:indicatorColor="?attr/colorPrimary"
+                app:trackColor="?attr/colorSurfaceVariant"
+                app:indicatorDirectionLinear="startToEnd"
+                android:progress="0"
+                android:max="100" />
+        </LinearLayout>
+
+        <!-- Files to Sync Section -->
+        <LinearLayout
+            android:id="@+id/filesToSyncSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.textview.MaterialTextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Files to Sync"
+                android:textStyle="bold"
+                android:textSize="16sp"
+                android:paddingTop="8dp"
+                android:paddingBottom="4dp" />
+
+            <ListView
+                android:id="@+id/fileListRecyclerView"
+                android:layout_width="match_parent"
+                android:layout_height="120dp"
+                android:background="#FAFAFA"
+                android:layout_marginBottom="12dp" />
+        </LinearLayout>
+
+        <!-- Action Buttons Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginTop="12dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/stopServiceButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Stop Scanning"
+                android:layout_marginEnd="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/transferButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Start Transfer"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/syncButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Sync to Cloud"
+            android:layout_marginTop="12dp" />
+
     </LinearLayout>
-
-    <!-- Add Crash Button -->
-    <Button
-        android:id="@+id/crashButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Force Crash"
-        android:layout_gravity="center"
-        android:layout_marginTop="16dp" />
-
-    <!-- Add Sync Button -->
-    <Button
-        android:id="@+id/syncButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Sync to Cloud"
-        android:layout_gravity="center"
-        android:layout_marginTop="16dp" />
-</LinearLayout>
+</ScrollView>

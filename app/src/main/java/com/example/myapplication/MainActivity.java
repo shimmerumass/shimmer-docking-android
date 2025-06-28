@@ -1,5 +1,6 @@
 package com.example.myapplication;
 
+import com.google.android.material.color.DynamicColors;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
@@ -7,7 +8,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.StrictMode;
@@ -16,11 +16,9 @@ import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
-import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -49,10 +47,15 @@ public class MainActivity extends AppCompatActivity {
     private ListView deviceListView;
     private TextView progressText;
     private ProgressBar transferProgressBar;
-
+    private LinearLayout progressSection;
+    private LinearLayout filesToSyncSection;
+    private Button syncButton;
+    private ListView fileListView;
+    private ArrayAdapter<String> fileListAdapter;
+    private List<File> filesToUpload;
+    private List<Boolean> uploadStatus; // true = uploaded, false = not yet
+    private List<Boolean> uploading;    // true = uploading, false = idle
     private String selectedMac = null;
-
-    // Firebase Analytics instance
     private FirebaseAnalytics firebaseAnalytics;
 
     // Timer Receiver - updates UI with remaining scan time or device info.
@@ -97,22 +100,18 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onReceive(Context context, Intent intent) {
             int progress = intent.getIntExtra("progress", -1);
-            Log.d("MainActivity", "Progress broadcast received: " + progress + "%");
             if (progress >= 0) {
                 runOnUiThread(() -> {
+                    progressSection.setVisibility(View.VISIBLE);
                     transferProgressBar.setProgress(progress);
                     progressText.setText("Transfer Progress: " + progress + "%");
+                    if (progress >= 100) {
+                        progressSection.setVisibility(View.GONE);
+                    }
                 });
             }
         }
     };
-
-    private Button syncButton;
-    private ListView fileListView;
-    private ArrayAdapter<String> fileListAdapter;
-    private List<File> filesToUpload;
-    private List<Boolean> uploadStatus; // true = uploaded, false = not yet
-    private List<Boolean> uploading;    // true = uploading, false = idle
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     @Override
@@ -172,18 +171,25 @@ public class MainActivity extends AppCompatActivity {
                 startService(transferIntent);
             }
             Toast.makeText(this, "Transfer started", Toast.LENGTH_SHORT).show();
+            // When transfer starts:
+            runOnUiThread(() -> progressSection.setVisibility(View.VISIBLE));
         });
 
-        Button crashButton = findViewById(R.id.crashButton);
-        crashButton.setOnClickListener(v -> {
-            throw new RuntimeException("Test Crash"); // Force a crash
-        });
-
-        // Add these lines:
         syncButton = findViewById(R.id.syncButton);
-        fileListView = findViewById(R.id.fileListRecyclerView); // Use your RecyclerView if you have one, else ListView
+        fileListView = findViewById(R.id.fileListRecyclerView);
 
-        syncButton.setOnClickListener(v -> syncFilesWithCloud());
+        syncButton.setOnClickListener(v -> {
+            syncFilesWithCloud();
+            // When sync button is clicked:
+            runOnUiThread(() -> filesToSyncSection.setVisibility(View.VISIBLE));
+        });
+
+        progressSection = findViewById(R.id.progressSection);
+        filesToSyncSection = findViewById(R.id.filesToSyncSection);
+
+        // Hide progress and files-to-sync sections initially
+        progressSection.setVisibility(View.GONE);
+        filesToSyncSection.setVisibility(View.GONE);
 
         // Register receivers with export flag if needed.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
