@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -30,6 +31,9 @@ import androidx.core.content.ContextCompat;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.analytics.FirebaseAnalytics;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
+
+import org.json.JSONArray;
+import org.json.JSONException;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -88,8 +92,10 @@ public class MainActivity extends AppCompatActivity {
         public void onReceive(Context context, Intent intent) {
             String status = intent.getStringExtra("status");
             if (status != null) {
-                runOnUiThread(() -> statusText.setText(status));
-                Log.d("MainShimmer", "Status updated: " + status);
+                runOnUiThread(() -> {
+                    statusText.setText(status);
+                    persistStatus(status); // supply latest remainingTime
+                });
             }
         }
     };
@@ -100,27 +106,30 @@ public class MainActivity extends AppCompatActivity {
         public void onReceive(Context context, Intent intent) {
             int progress = intent.getIntExtra("progress", -1);
             int total = intent.getIntExtra("total", 1);
-            String filename = intent.getStringExtra("filename"); // <-- Get filename
-            if (progress >= 0 && total > 0) {
-                int percent = (int) ((progress * 100.0f) / total);
-                String display = "Transfer Progress: " +  percent + "%)";
-                if (filename != null && !filename.isEmpty()) {
-                    display += "\nLast file: " + filename;
-                }
+            String filename = intent.getStringExtra("filename");
+            Log.d("ProgressDebug", "progress=" + progress + ", total=" + total);
+
+            if (progress > 0 && total > 0) {
                 runOnUiThread(() -> {
-                    String display1 = "Transfer Progress: " + percent + "%)";
-                    if (filename != null && !filename.isEmpty()) {
-                        display1 += "\nLast file: " + filename;
+                    int percent = (int) ((progress * 100.0f) / total);
+                    String display;
+                    if (progress >= total) {
+                        display = "Transfer completed!";
+                        showTransferCompletedNotification(); // <-- Add this line
+                        progressSection.setVisibility(View.GONE);
+                    } else {
+                        display = "Transfer Progress: " + progress + "/" + total + " (" + percent + "%)";
+                        if (filename != null && !filename.isEmpty()) {
+                            display += "\nLast file: " + filename;
+                        }
+                        progressSection.setVisibility(View.VISIBLE);
                     }
-                    progressSection.setVisibility(View.VISIBLE);
+                    progressText.setText(display);
                     transferProgressBar.setMax(total);
                     transferProgressBar.setProgress(progress);
-                    progressText.setText(display1);
-                    if (progress >= total) {
-                        progressSection.setVisibility(View.GONE);
-                    }
                 });
             }
+            persistTransferProgress(progress, total, filename);
         }
     };
 
@@ -207,6 +216,17 @@ public class MainActivity extends AppCompatActivity {
             registerReceiver(progressReceiver, new IntentFilter("com.example.myapplication.TRANSFER_PROGRESS"));
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                        this,
+                        new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                        1002 // any request code
+                );
+            }
+        }
+
         if (hasPermissions()) {
             startScanningService();
         } else {
@@ -250,6 +270,78 @@ public class MainActivity extends AppCompatActivity {
             transferProgressBar.setProgress(progress);
             progressSection.setVisibility(visibility);
         }
+
+        restoreUIState();
+    }
+
+    private void restoreUIState() {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+
+        // Restore scanned devices
+        String devicesJson = prefs.getString("scanned_devices", "[]");
+        ArrayList<String> devices = new ArrayList<>();
+        try {
+            JSONArray arr = new JSONArray(devicesJson);
+            for (int i = 0; i < arr.length(); i++) {
+                devices.add(arr.getString(i));
+            }
+        } catch (JSONException ignored) {}
+        updateDeviceList(devices);
+
+        // Restore selected device
+        selectedMac = prefs.getString("selected_mac", null);
+
+        // Restore timer/status
+        long remainingTime = prefs.getLong("remaining_time", 0);
+        String scanningStatus = prefs.getString("scanning_status", "Status");
+        timerText.setText("Remaining: " + (remainingTime / 1000) + " sec");
+        statusText.setText(scanningStatus);
+
+        // Restore transfer progress
+        if (isTransferServiceRunning()) {
+            int progress = prefs.getInt("transfer_progress", 0);
+            int total = prefs.getInt("transfer_total", 1);
+            String filename = prefs.getString("transfer_filename", "");
+            if (progress >= 0 && total > 0) {
+                int percent = (int) ((progress * 100.0f) / total);
+                String display = "Transfer Progress: " + progress + "/" + total + " (" + percent + "%)";
+                if (filename != null && !filename.isEmpty()) {
+                    display += "\nLast file: " + filename;
+                }
+                progressSection.setVisibility(View.VISIBLE);
+                transferProgressBar.setMax(total);
+                transferProgressBar.setProgress(progress);
+                progressText.setText(display);
+                if (progress >= total) {
+                    progressSection.setVisibility(View.GONE);
+                }
+            } else {
+                progressSection.setVisibility(View.GONE);
+            }
+        } else {
+            // Hide/reset progress bar if transfer not running
+            progressSection.setVisibility(View.GONE);
+        }
+
+        if (!isTransferServiceRunning()) {
+            // Defensive: clear transfer state if service is not running
+            prefs.edit()
+                .remove("transfer_progress")
+                .remove("transfer_total")
+                .remove("transfer_filename")
+                .remove("progress_visibility")
+                .apply();
+            progressSection.setVisibility(View.GONE);
+        }
+        if (!isScanningServiceRunning()) {
+            // Defensive: clear scan state if service is not running
+            prefs.edit()
+                .remove("scanning_status")
+                .remove("remaining_time")
+                .remove("scanned_devices")
+                .apply();
+            // Hide or reset scan-related UI
+        }
     }
 
     @Override
@@ -267,6 +359,37 @@ public class MainActivity extends AppCompatActivity {
         outState.putInt("progress_total", transferProgressBar.getMax());
         outState.putInt("progress_visibility", progressSection.getVisibility());
         outState.putBoolean("filesToSyncVisible", filesToSyncSection.getVisibility() == View.VISIBLE);
+    }
+
+    // Call this whenever you update the device list
+    private void persistDeviceList(ArrayList<String> devices) {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        prefs.edit().putString("scanned_devices", new JSONArray(devices).toString()).apply();
+    }
+
+    // Call this whenever you update timer/status
+    private void persistStatus (String status) {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        prefs.edit()
+                .putString("scanning_status", status)
+                .apply();
+    }
+
+    // Call this whenever you update transfer progress
+    private void persistTransferProgress(int progress, int total, String filename) {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        prefs.edit()
+                .putInt("transfer_progress", progress)
+                .putInt("transfer_total", total)
+                .putString("transfer_filename", filename)
+                .putInt("progress_visibility", progressSection.getVisibility())
+                .apply();
+    }
+
+    // Call this whenever you select a device
+    private void persistSelectedMac(String mac) {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        prefs.edit().putString("selected_mac", mac).apply();
     }
 
     private boolean hasPermissions() {
@@ -314,6 +437,8 @@ public class MainActivity extends AppCompatActivity {
                     statusText.setText("Selected device: " + parts[0]);
                 }
             });
+
+            persistDeviceList(devices); // <-- Add this line
         });
     }
 
@@ -411,5 +536,47 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    }
+
+    private boolean isTransferServiceRunning() {
+        android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if ("com.example.myapplication.TransferService".equals(service.service.getClassName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isScanningServiceRunning() {
+        android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if ("com.example.myapplication.ScanningService".equals(service.service.getClassName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void showTransferCompletedNotification() {
+        String channelId = "transfer_channel";
+        String channelName = "Bluetooth Transfer";
+        android.app.NotificationManager notificationManager =
+                (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            android.app.NotificationChannel channel = new android.app.NotificationChannel(
+                    channelId, channelName, android.app.NotificationManager.IMPORTANCE_DEFAULT);
+            notificationManager.createNotificationChannel(channel);
+        }
+
+        android.app.NotificationCompat.Builder builder = new android.app.NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+                .setContentTitle("Bluetooth File Transfer")
+                .setContentText("Transfer completed successfully!")
+                .setPriority(android.app.NotificationManager.IMPORTANCE_DEFAULT)
+                .setAutoCancel(true);
+
+        notificationManager.notify(1001, builder.build());
     }
 }
