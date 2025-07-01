@@ -3,6 +3,7 @@ package com.example.myapplication;
 import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.Build;
@@ -239,6 +240,8 @@ public class ShimmerFileTransferClient{
 
                 // Create the file
                 File debugFile = new File(context.getFilesDir(), "debug_log.txt");
+                boolean transferSuccess = false; // Track transfer status
+
                 try (FileWriter textWriter = new FileWriter(outputFile);
                      FileWriter debugWriter = new FileWriter(debugFile, true)) {
 
@@ -366,27 +369,24 @@ public class ShimmerFileTransferClient{
                     if (chunksProcessed >= totalChunks) {
                         Log.d(TAG, "Last chunk group processed. Skipping bytes until TRANSFER_END_PACKET with valid status...");
                         int packetId;
-                        int transferStatus;
+                        int transferStatus = -1;
                         while (true) {
                             packetId = in.read();
                             if (packetId == (TRANSFER_END_PACKET & 0xFF)) {
                                 transferStatus = in.read();
                                 Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
                                 if (transferStatus == 0x00 || transferStatus == 0x01) {
+                                    transferSuccess = true; // <-- Mark as success
                                     break;
                                 } else {
-                                    // If not a valid status, continue searching for the next FE
                                     Log.d(TAG, "Status after FE was not 00 or 01, continuing to skip...");
                                 }
                             }
                         }
 
-                        // (existing status handling/logging)
                         if (transferStatus == 0x01) {
                             Log.d(TAG, "Transfer completed successfully.");
-                            Bundle successBundle = new Bundle();
-                            successBundle.putString("mac_address", macAddress);
-                            firebaseAnalytics.logEvent("file_transfer_success", successBundle);
+                            // ... success logic ...
                         } else {
                             Log.e(TAG, "File transfer failed for file: " + relativeFilename);
                         }
@@ -414,6 +414,12 @@ public class ShimmerFileTransferClient{
                     } catch (IOException streamError) {
                         Log.e(TAG, "Error reading available bytes: " + streamError.getMessage(), streamError);
                     }
+                } finally {
+                    // Delete incomplete file if transfer was not successful
+                    if (!transferSuccess && outputFile.exists()) {
+                        Log.w(TAG, "Deleting incomplete file: " + outputFile.getAbsolutePath());
+                        outputFile.delete();
+                    }
                 }
 
                 // ---- ADD THIS BLOCK HERE: ----
@@ -431,7 +437,7 @@ public class ShimmerFileTransferClient{
                 progressIntent.setPackage(context.getPackageName());
                 progressIntent.putExtra("progress", fileIndex + 1);
                 progressIntent.putExtra("total", fileCount);
-                progressIntent.putExtra("filename", newFilename); // <-- Add this line
+                progressIntent.putExtra("filename", newFilename);
                 context.getApplicationContext().sendBroadcast(progressIntent);
             }
         } catch (IOException | InterruptedException e) {
@@ -443,6 +449,8 @@ public class ShimmerFileTransferClient{
             transferErrorBundle.putString("mac_address", macAddress);
             transferErrorBundle.putString("error_message", e.getMessage());
             firebaseAnalytics.logEvent("file_transfer_error", transferErrorBundle);
+
+            clearTransferProgressState();
         } finally {
             Log.d(TAG, "File transfer completed for MAC address: " + macAddress);
             Log.d(FIREBASE_TAG, "Logging file transfer completion to Firebase for MAC address: " + macAddress);
@@ -461,6 +469,7 @@ public class ShimmerFileTransferClient{
                 }
                 socket = null;
             }
+            clearTransferProgressState();
         }
     }
 
@@ -561,6 +570,17 @@ public class ShimmerFileTransferClient{
         values.put("SYNCED", 1);
         db.update("files", values, "FILE_PATH=?", new String[]{file.getAbsolutePath()});
         db.close();
+    }
+
+    private void clearTransferProgressState() {
+        Log.d(TAG, "[CLEAR_STATE] Clearing transfer progress state from SharedPreferences");
+        SharedPreferences prefs = context.getSharedPreferences("app_state", Context.MODE_PRIVATE);
+        prefs.edit()
+            .remove("transfer_progress")
+            .remove("transfer_total")
+            .remove("transfer_filename")
+            .remove("progress_visibility")
+            .apply();
     }
 
 }

@@ -384,6 +384,15 @@ public class ScanningService extends Service {
         sendBroadcast(intent);
     }
 
+    private void clearScanStatusState() {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        prefs.edit()
+                .remove("scanning_status")
+                .remove("remaining_time")
+                .remove("scanned_devices")
+                .apply();
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "onStartCommand called");
@@ -404,6 +413,7 @@ public class ScanningService extends Service {
         if (bluetoothAdapter != null && bluetoothAdapter.isDiscovering()) {
             bluetoothAdapter.cancelDiscovery();
         }
+        clearScanStatusState();
         super.onDestroy();
     }
 
