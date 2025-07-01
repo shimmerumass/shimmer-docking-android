@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.Build;
+import android.provider.Settings;
 import android.util.Log;
 
 import java.io.EOFException;
@@ -227,11 +228,11 @@ public class ShimmerFileTransferClient{
 
                 // Receive file chunks
                 // Get username and timestamp ONCE per file
-                String username = android.provider.Settings.Global.getString(context.getContentResolver(), android.provider.Settings.Global.DEVICE_NAME);
-                if (username == null || username.isEmpty()) username = "user";
+                String phoneMac = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
+                if (phoneMac == null || phoneMac.isEmpty()) phoneMac = "user";
                 String timestamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
                 String baseName = new File(relativeFilename).getName();
-                String newFilename = username + "_" + timestamp + "_" + baseName + ".txt";
+                String newFilename = phoneMac + "_" + timestamp + "_" + baseName + ".txt";
                 File dataDir = new File(context.getFilesDir(), "data");
                 if (!dataDir.exists()) dataDir.mkdirs();
                 File outputFile = new File(dataDir, newFilename);
@@ -277,9 +278,9 @@ public class ShimmerFileTransferClient{
                             int chunkSizeForThisChunk = ((totalBytes[1] & 0xFF) << 8) | (totalBytes[0] & 0xFF);
                             byte[] chunkData = readExact(in, chunkSizeForThisChunk);
 
-                             Log.d(TAG, "Chunk number (raw bytes): " + String.format("%02X %02X", chunkNumBytes[0], chunkNumBytes[1])+ 
-                                    ", Total bytes (raw bytes): " + String.format("%02X %02X", totalBytes[0], totalBytes[1]) +
-                                    ", Chunk size: " + chunkSizeForThisChunk);
+//                             Log.d(TAG, "Chunk number (raw bytes): " + String.format("%02X %02X", chunkNumBytes[0], chunkNumBytes[1])+
+//                                    ", Total bytes (raw bytes): " + String.format("%02X %02X", totalBytes[0], totalBytes[1]) +
+//                                    ", Chunk size: " + chunkSizeForThisChunk);
 
                             // Write ASCII-decoded data to the ASCII file
                             for (byte b : chunkData) {
@@ -306,11 +307,7 @@ public class ShimmerFileTransferClient{
                             }
 
                             chunksProcessed++;
-                            int percent = (int) ((chunksProcessed * 100.0) / totalChunks);
-
-                            Intent progressIntent = new Intent("com.example.myapplication.TRANSFER_PROGRESS");
-                            progressIntent.putExtra("progress", percent);
-                            context.sendBroadcast(progressIntent);
+                            
                         }
 
                         // Send ACK or NACK based on validity
@@ -429,6 +426,13 @@ public class ShimmerFileTransferClient{
                 db.insert("files", null, values);
                 db.close();
                 // ---- END OF BLOCK ----
+
+                Intent progressIntent = new Intent("com.example.myapplication.TRANSFER_PROGRESS");
+                progressIntent.setPackage(context.getPackageName());
+                progressIntent.putExtra("progress", fileIndex + 1);
+                progressIntent.putExtra("total", fileCount);
+                progressIntent.putExtra("filename", newFilename); // <-- Add this line
+                context.getApplicationContext().sendBroadcast(progressIntent);
             }
         } catch (IOException | InterruptedException e) {
             Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
