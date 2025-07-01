@@ -1,6 +1,6 @@
 package com.example.myapplication;
 
-import com.google.android.material.color.DynamicColors;
+import com.google.android.material.button.MaterialButton;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
@@ -23,6 +23,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
@@ -48,17 +49,17 @@ public class MainActivity extends AppCompatActivity {
     private TextView progressText;
     private ProgressBar transferProgressBar;
     private LinearLayout progressSection;
-    private LinearLayout filesToSyncSection;
+    private com.google.android.material.card.MaterialCardView filesToSyncSection;
     private Button syncButton;
     private ListView fileListView;
     private ArrayAdapter<String> fileListAdapter;
     private List<File> filesToUpload;
-    private List<Boolean> uploadStatus; // true = uploaded, false = not yet
-    private List<Boolean> uploading;    // true = uploading, false = idle
+    private List<Boolean> uploadStatus;
+    private List<Boolean> uploading;
     private String selectedMac = null;
     private FirebaseAnalytics firebaseAnalytics;
 
-    // Timer Receiver - updates UI with remaining scan time or device info.
+    // Receivers for Bluetooth scanning and transfer progress
     private final BroadcastReceiver timerReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -72,7 +73,6 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    // Scan Results Receiver - updates device list.
     private final BroadcastReceiver scanResultReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -83,7 +83,6 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    // Status Receiver - updates status text.
     private final BroadcastReceiver statusReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -95,23 +94,44 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    // Progress Receiver - shows transfer progress.
+    // Bluetooth Transfer Progress Receiver
     private final BroadcastReceiver progressReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             int progress = intent.getIntExtra("progress", -1);
-            if (progress >= 0) {
+            int total = intent.getIntExtra("total", 1);
+            String filename = intent.getStringExtra("filename"); // <-- Get filename
+            if (progress >= 0 && total > 0) {
+                int percent = (int) ((progress * 100.0f) / total);
+                String display = "Transfer Progress: " +  percent + "%)";
+                if (filename != null && !filename.isEmpty()) {
+                    display += "\nLast file: " + filename;
+                }
                 runOnUiThread(() -> {
+                    String display1 = "Transfer Progress: " + percent + "%)";
+                    if (filename != null && !filename.isEmpty()) {
+                        display1 += "\nLast file: " + filename;
+                    }
                     progressSection.setVisibility(View.VISIBLE);
+                    transferProgressBar.setMax(total);
                     transferProgressBar.setProgress(progress);
-                    progressText.setText("Transfer Progress: " + progress + "%");
-                    if (progress >= 100) {
+                    progressText.setText(display1);
+                    if (progress >= total) {
                         progressSection.setVisibility(View.GONE);
                     }
                 });
             }
         }
     };
+
+    private void updateThemeToggleIcon(MaterialButton themeToggleButton) {
+        int currentNightMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        if (currentNightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES) {
+            themeToggleButton.setText("🌒");
+        } else {
+            themeToggleButton.setText("🌔");
+        }
+    }
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     @Override
@@ -120,31 +140,13 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         FirebaseApp.initializeApp(this);
-
-        // Initialize Firebase Analytics
         firebaseAnalytics = FirebaseAnalytics.getInstance(this);
-
-        // Enable Crashlytics
         FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(true);
 
-        // Log a custom message to Crashlytics
-        FirebaseCrashlytics.getInstance().log("MainActivity started");
-
-        // Log custom event for screen view
-        Bundle bundle = new Bundle();
-        bundle.putString("custom_event", "MainActivity");
-        firebaseAnalytics.logEvent("custom_event", bundle);
-        firebaseAnalytics.logEvent("custom_event", null);
-
-        // StrictMode policy settings
         StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder()
-                .detectAll()
-                .penaltyLog()
-                .build());
+                .detectAll().penaltyLog().build());
         StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
-                .detectAll()
-                .penaltyLog()
-                .build());
+                .detectAll().penaltyLog().build());
 
         timerText = findViewById(R.id.timerText);
         statusText = findViewById(R.id.statusText);
@@ -171,7 +173,6 @@ public class MainActivity extends AppCompatActivity {
                 startService(transferIntent);
             }
             Toast.makeText(this, "Transfer started", Toast.LENGTH_SHORT).show();
-            // When transfer starts:
             runOnUiThread(() -> progressSection.setVisibility(View.VISIBLE));
         });
 
@@ -180,18 +181,16 @@ public class MainActivity extends AppCompatActivity {
 
         syncButton.setOnClickListener(v -> {
             syncFilesWithCloud();
-            // When sync button is clicked:
             runOnUiThread(() -> filesToSyncSection.setVisibility(View.VISIBLE));
         });
 
         progressSection = findViewById(R.id.progressSection);
         filesToSyncSection = findViewById(R.id.filesToSyncSection);
 
-        // Hide progress and files-to-sync sections initially
         progressSection.setVisibility(View.GONE);
         filesToSyncSection.setVisibility(View.GONE);
 
-        // Register receivers with export flag if needed.
+        // Register receivers
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(timerReceiver, new IntentFilter(ScanningService.ACTION_TIMER_UPDATE),
                     Context.RECEIVER_NOT_EXPORTED);
@@ -216,20 +215,58 @@ public class MainActivity extends AppCompatActivity {
 
         TextView userNameTextView = findViewById(R.id.user_name_text_view);
 
-        // Get the device name from system settings.
         String deviceName = Settings.Global.getString(getContentResolver(), Settings.Global.DEVICE_NAME);
-
-        // Fallback if Settings.Global.DEVICE_NAME is null (older devices)
         if (deviceName == null || deviceName.isEmpty()) {
             deviceName = Settings.Secure.getString(getContentResolver(), "bluetooth_name");
         }
-
-        // Display the device name in the TextView.
         if (deviceName != null && !deviceName.isEmpty()) {
             userNameTextView.setText("Welcome, " + deviceName + "!");
         } else {
             userNameTextView.setText("Welcome!");
         }
+
+        MaterialButton themeToggleButton = findViewById(R.id.themeToggleButton);
+        updateThemeToggleIcon(themeToggleButton);
+
+        themeToggleButton.setOnClickListener(v -> {
+            int mode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+            if (mode == android.content.res.Configuration.UI_MODE_NIGHT_YES) {
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+            } else {
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+            }
+        });
+
+        if (savedInstanceState != null) {
+            ArrayList<String> devices = savedInstanceState.getStringArrayList("devices");
+            selectedMac = savedInstanceState.getString("selectedMac");
+            if (devices != null) {
+                updateDeviceList(devices);
+            }
+            int progress = savedInstanceState.getInt("progress", 0);
+            int total = savedInstanceState.getInt("progress_total", 100);
+            int visibility = savedInstanceState.getInt("progress_visibility", View.GONE);
+            transferProgressBar.setMax(total);
+            transferProgressBar.setProgress(progress);
+            progressSection.setVisibility(visibility);
+        }
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        if (deviceListView != null && deviceListView.getAdapter() != null) {
+            ArrayList<String> devices = new ArrayList<>();
+            for (int i = 0; i < deviceListView.getAdapter().getCount(); i++) {
+                devices.add((String) deviceListView.getAdapter().getItem(i));
+            }
+            outState.putStringArrayList("devices", devices);
+        }
+        outState.putString("selectedMac", selectedMac);
+        outState.putInt("progress", transferProgressBar.getProgress());
+        outState.putInt("progress_total", transferProgressBar.getMax());
+        outState.putInt("progress_visibility", progressSection.getVisibility());
+        outState.putBoolean("filesToSyncVisible", filesToSyncSection.getVisibility() == View.VISIBLE);
     }
 
     private boolean hasPermissions() {
@@ -255,6 +292,18 @@ public class MainActivity extends AppCompatActivity {
             ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
                     android.R.layout.simple_list_item_1, devices);
             deviceListView.setAdapter(adapter);
+
+            if (selectedMac != null) {
+                for (int i = 0; i < devices.size(); i++) {
+                    String deviceInfo = devices.get(i);
+                    String[] parts = deviceInfo.split(" - ");
+                    if (parts.length == 2 && selectedMac.equals(parts[1])) {
+                        deviceListView.setItemChecked(i, true);
+                        statusText.setText("Selected device: " + parts[0]);
+                        break;
+                    }
+                }
+            }
 
             deviceListView.setOnItemClickListener((parent, view, position, id) -> {
                 String deviceInfo = devices.get(position);
