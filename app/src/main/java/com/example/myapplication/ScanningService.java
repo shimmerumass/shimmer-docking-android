@@ -421,4 +421,24 @@ public class ScanningService extends Service {
     public IBinder onBind(Intent intent) {
         return null;
     }
+
+    // In ScanningService.java, when scanning starts after sleep:
+    private void startScanning() {
+        // ...existing code to start scanning...
+        long scanDuration = SCAN_DURATION_MS;
+        long scanStartTime = System.currentTimeMillis();
+        long remainingTime = scanDuration;
+
+        // Persist remaining time
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        prefs.edit().putLong("remaining_time", remainingTime).apply();
+
+        // Broadcast remaining time
+        Intent timerIntent = new Intent(ACTION_TIMER_UPDATE);
+        timerIntent.putExtra("remaining_time", remainingTime);
+        sendBroadcast(timerIntent);
+
+        // Start the actual scanning process
+        enableBluetoothIfNeeded(this::startDiscovery);
+    }
 }
