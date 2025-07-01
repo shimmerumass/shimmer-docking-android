@@ -26,6 +26,7 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.firebase.FirebaseApp;
@@ -67,13 +68,8 @@ public class MainActivity extends AppCompatActivity {
     private final BroadcastReceiver timerReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            String deviceInfo = intent.getStringExtra("device_info");
-            if (deviceInfo != null) {
-                runOnUiThread(() -> timerText.setText("Shimmer: " + deviceInfo));
-            } else {
-                long remainingTime = intent.getLongExtra("remaining_time", 0);
-                runOnUiThread(() -> timerText.setText("Remaining: " + (remainingTime / 1000) + " sec"));
-            }
+            long remainingTime = intent.getLongExtra("remaining_time", 0);
+            runOnUiThread(() -> timerText.setText("Remaining: " + (remainingTime / 1000) + " sec"));
         }
     };
 
@@ -570,11 +566,11 @@ public class MainActivity extends AppCompatActivity {
             notificationManager.createNotificationChannel(channel);
         }
 
-        android.app.NotificationCompat.Builder builder = new android.app.NotificationCompat.Builder(this, channelId)
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, channelId) // <-- Use correct class
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
                 .setContentTitle("Bluetooth File Transfer")
                 .setContentText("Transfer completed successfully!")
-                .setPriority(android.app.NotificationManager.IMPORTANCE_DEFAULT)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setAutoCancel(true);
 
         notificationManager.notify(1001, builder.build());
