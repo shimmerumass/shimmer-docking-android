@@ -1,151 +1,220 @@
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:background="?android:colorBackground">
 
-    <LinearLayout
+    <!-- Main content scrolls -->
+    <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="?android:attr/windowBackground"
-        android:orientation="vertical"
-        android:padding="30dp">
+        android:layout_height="match_parent"
+        android:fillViewport="true">
 
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/user_name_text_view"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:paddingBottom="16dp"
-            android:text="Welcome!"
-            android:textColor="?android:textColorPrimary"
-            android:textSize="24sp"
-            android:textStyle="bold" />
-
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/timerText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:padding="4dp"
-            android:text="Remaining: -- sec"
-            android:textSize="16sp" />
-
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/statusText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:padding="4dp"
-            android:text="Status"
-            android:textSize="16sp" />
-
-        <com.google.android.material.textview.MaterialTextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="12dp"
-            android:paddingBottom="4dp"
-            android:text="Available Devices"
-            android:textSize="17sp"
-            android:textStyle="bold" />
-
-        <ListView
-            android:id="@+id/deviceListView"
-            android:layout_width="match_parent"
-            android:layout_height="120dp"
-            android:layout_marginBottom="8dp"
-            android:background="?attr/colorPrimary"
-            android:dividerHeight="1dp" />
-
-        <!-- Transfer Progress Section -->
         <LinearLayout
-            android:id="@+id/progressSection"
+            android:id="@+id/your_root_layout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/bg_section_card"
             android:orientation="vertical"
-            android:padding="12dp"
-            android:visibility="gone">
+            android:padding="20dp"
+            android:background="@android:color/transparent">
 
-            <com.google.android.material.textview.MaterialTextView
-                android:id="@+id/progressText"
+            <!-- Theme toggle button at the top -->
+
+            <!-- Welcome Section -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/themeToggleButton"
+                style="@style/Widget.Material3.Button.Icon"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end"
+                android:layout_marginBottom="8dp"
+                android:backgroundTint="?attr/colorSurface"
+                android:elevation="6dp"
+                android:text="🌔" />
+
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:paddingTop="8dp"
-                android:text="Transfer Progress: 0%"
-                android:textSize="15sp" />
+                app:cardCornerRadius="18dp"
+                app:cardElevation="4dp"
+                android:layout_marginBottom="16dp"
+                app:strokeColor="?attr/colorPrimary"
+                app:strokeWidth="1dp">
 
-            <com.google.android.material.progressindicator.LinearProgressIndicator
-                android:id="@+id/transferProgressBar"
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/user_name_text_view"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:padding="20dp"
+                    android:text="Welcome!"
+                    android:textColor="?android:textColorPrimary"
+                    android:textSize="24sp"
+                    android:textStyle="bold" />
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Status Section -->
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:max="100"
-                android:progress="0"
-                app:indicatorColor="?attr/colorPrimary"
-                app:indicatorDirectionLinear="startToEnd"
-                app:trackColor="?attr/colorSurfaceVariant" />
-        </LinearLayout>
+                app:cardCornerRadius="14dp"
+                app:cardElevation="2dp"
+                android:layout_marginBottom="12dp">
 
-        <!-- Files to Sync Section -->
-        <LinearLayout
-            android:id="@+id/filesToSyncSection"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/bg_section_card"
-            android:orientation="vertical"
-            android:padding="12dp"
-            android:visibility="gone">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
 
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/timerText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Remaining: -- sec"
+                        android:textSize="16sp"
+                        android:paddingBottom="4dp" />
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/statusText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Status"
+                        android:textSize="16sp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Device List Section -->
             <com.google.android.material.textview.MaterialTextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:text="Available Devices"
+                android:textStyle="bold"
+                android:textSize="17sp"
                 android:paddingTop="8dp"
-                android:paddingBottom="4dp"
-                android:text="Files to Sync"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:paddingBottom="4dp" />
 
-            <ListView
-                android:id="@+id/fileListRecyclerView"
+            <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
-                android:layout_height="120dp"
-                android:layout_marginBottom="12dp"
-                android:background="#FAFAFA" />
-        </LinearLayout>
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="1dp"
+                android:layout_marginBottom="14dp">
 
-        <!-- Action Buttons Section -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:gravity="center"
-            android:orientation="horizontal">
+                <ListView
+                    android:id="@+id/deviceListView"
+                    android:layout_width="match_parent"
+                    android:layout_height="120dp"
+                    android:dividerHeight="1dp"
+                    android:background="?attr/colorSurface" />
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Transfer Progress Section -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="1dp"
+                android:layout_marginBottom="14dp">
+
+                <LinearLayout
+                    android:id="@+id/progressSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:padding="12dp">
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/progressText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Transfer Progress: 0%"
+                        android:paddingTop="8dp"
+                        android:textSize="15sp" />
+
+                    <com.google.android.material.progressindicator.LinearProgressIndicator
+                        android:id="@+id/transferProgressBar"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="100"
+                        android:progress="0"
+                        app:indicatorColor="?attr/colorPrimary"
+                        app:indicatorDirectionLinear="startToEnd"
+                        app:trackColor="?attr/colorSurfaceVariant" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Files to Sync Section -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/filesToSyncSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:visibility="gone"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="1dp"
+                android:layout_marginBottom="14dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="10dp">
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Files to Sync"
+                        android:textStyle="bold"
+                        android:textSize="16sp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="4dp" />
+
+                    <ListView
+                        android:id="@+id/fileListRecyclerView"
+                        android:layout_width="match_parent"
+                        android:layout_height="120dp"
+                        android:background="?attr/colorSurface"
+                        android:layout_marginBottom="8dp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Action Buttons Section -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginTop="12dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stopServiceButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:text="Stop Scanning"
+                    style="@style/Widget.Material3.Button.OutlinedButton" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/transferButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:text="Start Transfer"
+                    style="@style/Widget.Material3.Button" />
+            </LinearLayout>
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/stopServiceButton"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="0dp"
+                android:id="@+id/syncButton"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
-                android:layout_weight="1"
-                android:text="Stop Scanning" />
+                android:layout_marginTop="12dp"
+                android:text="Sync to Cloud"
+                style="@style/Widget.Material3.Button.OutlinedButton" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/transferButton"
-                style="@style/Widget.Material3.Button"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:text="Start Transfer" />
         </LinearLayout>
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/syncButton"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="Sync to Cloud" />
-
-    </LinearLayout>
-</ScrollView>
+    </ScrollView>
+</FrameLayout>
