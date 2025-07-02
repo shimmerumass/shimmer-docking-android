@@ -63,6 +63,7 @@ public class MainActivity extends AppCompatActivity {
     private List<Boolean> uploading;
     private String selectedMac = null;
     private FirebaseAnalytics firebaseAnalytics;
+    private Button transferButton;
 
     // Receivers for Bluetooth scanning and transfer progress
     private final BroadcastReceiver timerReceiver = new BroadcastReceiver() {
@@ -103,29 +104,73 @@ public class MainActivity extends AppCompatActivity {
             int progress = intent.getIntExtra("progress", -1);
             int total = intent.getIntExtra("total", 1);
             String filename = intent.getStringExtra("filename");
-            Log.d("ProgressDebug", "progress=" + progress + ", total=" + total);
 
-            if (progress > 0 && total > 0) {
-                runOnUiThread(() -> {
-                    int percent = (int) ((progress * 100.0f) / total);
-                    String display;
-                    if (progress >= total) {
-                        display = "Transfer completed!";
-                        showTransferCompletedNotification(); // <-- Add this line
-                        progressSection.setVisibility(View.GONE);
-                    } else {
-                        display = "Transfer Progress: " + progress + "/" + total + " (" + percent + "%)";
-                        if (filename != null && !filename.isEmpty()) {
-                            display += "\nLast file: " + filename;
-                        }
-                        progressSection.setVisibility(View.VISIBLE);
+            runOnUiThread(() -> {
+                progressSection.setVisibility(View.VISIBLE);
+                transferProgressBar.setVisibility(View.VISIBLE);
+
+                // Disable buttons and hide stop scanning during transfer
+                syncButton.setEnabled(false);
+                transferButton.setEnabled(false);
+                
+
+                int percent = (int) ((progress * 100.0f) / total);
+                String display;
+                if (progress >= total) {
+                    display = "Transfer completed!";
+                    showTransferCompletedNotification();
+                    progressSection.setVisibility(View.GONE);
+
+                    // Re-enable buttons and show stop scanning after transfer
+                    syncButton.setEnabled(true);
+                    transferButton.setEnabled(true);
+
+                } else {
+                    display = "Transfer Progress: " + progress + "/" + total + " (" + percent + "%)";
+                    if (filename != null && !filename.isEmpty()) {
+                        display += "\nLast file: " + filename;
                     }
-                    progressText.setText(display);
-                    transferProgressBar.setMax(total);
-                    transferProgressBar.setProgress(progress);
-                });
-            }
+                }
+                progressText.setText(display);
+                transferProgressBar.setMax(total);
+                transferProgressBar.setProgress(progress);
+            });
+
             persistTransferProgress(progress, total, filename);
+        }
+    };
+
+    private final BroadcastReceiver transferErrorReceiver = new BroadcastReceiver() {
+        private android.os.CountDownTimer countDownTimer;
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String errorMessage = intent.getStringExtra("error_message");
+            int retrySeconds = intent.getIntExtra("retry_seconds", 0);
+
+            Log.d("MainActivity", "Received transfer error: " + errorMessage + ", retrySeconds=" + retrySeconds);
+
+            runOnUiThread(() -> {
+                progressSection.setVisibility(View.VISIBLE);
+                transferProgressBar.setVisibility(View.GONE);
+                if (countDownTimer != null) countDownTimer.cancel();
+
+                if (retrySeconds > 0) {
+                    countDownTimer = new android.os.CountDownTimer(retrySeconds * 1000, 1000) {
+                        public void onTick(long millisUntilFinished) {
+                            int secs = (int) (millisUntilFinished / 1000);
+                            progressText.setText(errorMessage.replace("1:00", String.format("0:%02d", secs)));
+                        }
+                        public void onFinish() {
+                            progressText.setText("");
+                            progressSection.setVisibility(View.GONE);
+                            transferProgressBar.setVisibility(View.VISIBLE);
+                        }
+                    }.start();
+                } else {
+                    progressText.setText(errorMessage);
+                }
+            });
         }
     };
 
@@ -159,12 +204,7 @@ public class MainActivity extends AppCompatActivity {
         progressText = findViewById(R.id.progressText);
         transferProgressBar = findViewById(R.id.transferProgressBar);
 
-        Button stopServiceButton = findViewById(R.id.stopServiceButton);
-        stopServiceButton.setOnClickListener(v ->
-                stopService(new Intent(MainActivity.this, ScanningService.class))
-        );
-
-        Button transferButton = findViewById(R.id.transferButton);
+        transferButton = findViewById(R.id.transferButton);
         transferButton.setOnClickListener(v -> {
             if (selectedMac == null) {
                 Toast.makeText(this, "Please select a Shimmer device first.", Toast.LENGTH_SHORT).show();
@@ -205,11 +245,14 @@ public class MainActivity extends AppCompatActivity {
                     Context.RECEIVER_NOT_EXPORTED);
             registerReceiver(progressReceiver, new IntentFilter("com.example.myapplication.TRANSFER_PROGRESS"),
                     Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(transferErrorReceiver, new IntentFilter("com.example.myapplication.TRANSFER_ERROR"),
+                    Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(timerReceiver, new IntentFilter(ScanningService.ACTION_TIMER_UPDATE));
             registerReceiver(scanResultReceiver, new IntentFilter(ScanningService.ACTION_SCAN_RESULTS));
             registerReceiver(statusReceiver, new IntentFilter(ScanningService.ACTION_STATUS_UPDATE));
             registerReceiver(progressReceiver, new IntentFilter("com.example.myapplication.TRANSFER_PROGRESS"));
+            registerReceiver(transferErrorReceiver, new IntentFilter("com.example.myapplication.TRANSFER_ERROR"));
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -266,6 +309,7 @@ public class MainActivity extends AppCompatActivity {
             transferProgressBar.setProgress(progress);
             progressSection.setVisibility(visibility);
         }
+    
 
         restoreUIState();
     }
@@ -322,20 +366,20 @@ public class MainActivity extends AppCompatActivity {
         if (!isTransferServiceRunning()) {
             // Defensive: clear transfer state if service is not running
             prefs.edit()
-                .remove("transfer_progress")
-                .remove("transfer_total")
-                .remove("transfer_filename")
-                .remove("progress_visibility")
-                .apply();
+                    .remove("transfer_progress")
+                    .remove("transfer_total")
+                    .remove("transfer_filename")
+                    .remove("progress_visibility")
+                    .apply();
             progressSection.setVisibility(View.GONE);
         }
         if (!isScanningServiceRunning()) {
             // Defensive: clear scan state if service is not running
             prefs.edit()
-                .remove("scanning_status")
-                .remove("remaining_time")
-                .remove("scanned_devices")
-                .apply();
+                    .remove("scanning_status")
+                    .remove("remaining_time")
+                    .remove("scanned_devices")
+                    .apply();
             // Hide or reset scan-related UI
         }
     }
@@ -354,6 +398,9 @@ public class MainActivity extends AppCompatActivity {
         outState.putInt("progress", transferProgressBar.getProgress());
         outState.putInt("progress_total", transferProgressBar.getMax());
         outState.putInt("progress_visibility", progressSection.getVisibility());
+        outState.putString("progressText", progressText.getText().toString());
+        outState.putInt("progressSectionVisibility", progressSection.getVisibility());
+        outState.putInt("progressBarVisibility", transferProgressBar.getVisibility());
         outState.putBoolean("filesToSyncVisible", filesToSyncSection.getVisibility() == View.VISIBLE);
     }
 
@@ -512,6 +559,7 @@ public class MainActivity extends AppCompatActivity {
             unregisterReceiver(scanResultReceiver);
             unregisterReceiver(statusReceiver);
             unregisterReceiver(progressReceiver);
+            unregisterReceiver(transferErrorReceiver);
         } catch (Exception e) {
             Log.w("MainActivity", "Receiver unregistration error: " + e.getMessage());
         }
