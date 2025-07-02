@@ -518,7 +518,7 @@ public class MainActivity extends AppCompatActivity {
                         } else if (uploading.get(position)) {
                             return "⏳ " + file.getName();
                         } else {
-                            return file.getName();
+                            return "❌ " + file.getName(); // Show failed status
                         }
                     }
                 };
