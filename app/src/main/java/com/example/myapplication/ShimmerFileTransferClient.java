@@ -141,6 +141,15 @@ public class ShimmerFileTransferClient{
             if (responseId != (FILE_LIST_RESPONSE & 0xFF)) {
                 Log.e(TAG, "Expected FILE_LIST_RESPONSE (0xD3) but got: " + String.format("%02X", responseId));
                 crashlytics.log("Expected FILE_LIST_RESPONSE (0xD3) but got: " + String.format("%02X", responseId));
+
+                clearTransferProgressStateAndNotifyUI("Unexpected header, restarting after 1:00", 60);
+
+                // Schedule restart after 1 minute
+                new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
+                    clearTransferProgressStateAndNotifyUI("", 0); // Clear error message before restart
+                    new Thread(() -> transferOneFileFullFlow(macAddress)).start();
+                }, 60_000);
+
                 return;
             }
             int fileCount = in.read() & 0xFF;
@@ -160,6 +169,14 @@ public class ShimmerFileTransferClient{
             }
 
             // --- STEP 3: Transfer Each File ---
+            // Before starting the file transfer loop
+            Intent progressIntent = new Intent("com.example.myapplication.TRANSFER_PROGRESS");
+            progressIntent.setPackage(context.getPackageName());
+            progressIntent.putExtra("progress", 0);
+            progressIntent.putExtra("total", fileCount);
+            progressIntent.putExtra("filename", "");
+            context.getApplicationContext().sendBroadcast(progressIntent);
+
             for (int fileIndex = 0; fileIndex < fileCount; fileIndex++) {
                 Log.d(TAG, "Processing file index: " + fileIndex);
                 Log.d(FIREBASE_TAG, "Logging file processing start to Firebase for file index: " + fileIndex);
@@ -270,8 +287,21 @@ public class ShimmerFileTransferClient{
 
                             if (packetId != (CHUNK_DATA_PACKET & 0xFF)) {
                                 Log.w(TAG, "Unexpected header packet received: " + String.format("%02X", packetId));
-                                chunksAreValid = false; // Mark chunks as invalid
-                                break;
+                                // Delete incomplete file and DB entry
+                                if (outputFile.exists()) outputFile.delete();
+                                FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
+                                SQLiteDatabase db = dbHelper.getWritableDatabase();
+                                db.delete("files", "FILE_PATH=?", new String[]{outputFile.getAbsolutePath()});
+                                db.close();
+
+                                clearTransferProgressStateAndNotifyUI("Unexpected header, restarting after 1:00", 60);
+
+                                // Schedule restart after 1 minute
+                                new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
+                                    clearTransferProgressStateAndNotifyUI("", 0); // Clear error message before restart
+                                    new Thread(() -> transferOneFileFullFlow(macAddress)).start();
+                                }, 60_000);
+                                return;
                             }
 
                             byte[] chunkNumBytes = readExact(in, 2);
@@ -346,9 +376,21 @@ public class ShimmerFileTransferClient{
                             }
                         }
                         if (!gotResponse) {
-                            Log.e(TAG, " No response after 3 ACK retries, restarting file transfer process.");
-                            // Do NOT save the file, just restart the transfer
-                            transferOneFileFullFlow(macAddress);
+                            Log.e(TAG, " No response after 3 ACK retries, scheduling transfer restart in 1 minute.");
+                            // Delete incomplete file and DB entry
+                            if (outputFile.exists()) outputFile.delete();
+                            FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
+                            SQLiteDatabase db = dbHelper.getWritableDatabase();
+                            db.delete("files", "FILE_PATH=?", new String[]{outputFile.getAbsolutePath()});
+                            db.close();
+
+                            clearTransferProgressStateAndNotifyUI("No response after ACK, restarting after 1:00", 60);
+
+                            // Schedule restart after 1 minute
+                            new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
+                                clearTransferProgressStateAndNotifyUI("", 0); // Clear error message before restart
+                                new Thread(() -> transferOneFileFullFlow(macAddress)).start();
+                            }, 60_000);
                             return;
                         }
 
@@ -433,7 +475,7 @@ public class ShimmerFileTransferClient{
                 db.close();
                 // ---- END OF BLOCK ----
 
-                Intent progressIntent = new Intent("com.example.myapplication.TRANSFER_PROGRESS");
+                progressIntent = new Intent("com.example.myapplication.TRANSFER_PROGRESS");
                 progressIntent.setPackage(context.getPackageName());
                 progressIntent.putExtra("progress", fileIndex + 1);
                 progressIntent.putExtra("total", fileCount);
@@ -450,7 +492,7 @@ public class ShimmerFileTransferClient{
             transferErrorBundle.putString("error_message", e.getMessage());
             firebaseAnalytics.logEvent("file_transfer_error", transferErrorBundle);
 
-            clearTransferProgressState();
+            clearTransferProgressStateAndNotifyUI(e.getMessage(), 5);
         } finally {
             Log.d(TAG, "File transfer completed for MAC address: " + macAddress);
             Log.d(FIREBASE_TAG, "Logging file transfer completion to Firebase for MAC address: " + macAddress);
@@ -581,6 +623,24 @@ public class ShimmerFileTransferClient{
             .remove("transfer_filename")
             .remove("progress_visibility")
             .apply();
+    }
+
+    private void clearTransferProgressStateAndNotifyUI(String message, int retrySeconds) {
+        Log.d(TAG, "[CLEAR_STATE] Clearing transfer progress state from SharedPreferences (reason: " + message + ")");
+        SharedPreferences prefs = context.getSharedPreferences("app_state", Context.MODE_PRIVATE);
+        prefs.edit()
+            .remove("transfer_progress")
+            .remove("transfer_total")
+            .remove("transfer_filename")
+            .remove("progress_visibility")
+            .apply();
+
+        // Send broadcast to update UI with error message and countdown
+        Intent intent = new Intent("com.example.myapplication.TRANSFER_ERROR");
+        intent.setPackage(context.getPackageName());
+        intent.putExtra("error_message", message);
+        intent.putExtra("retry_seconds", retrySeconds);
+        context.getApplicationContext().sendBroadcast(intent);
     }
 
 }
