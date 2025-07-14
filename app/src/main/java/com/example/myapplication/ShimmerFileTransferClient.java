@@ -311,9 +311,9 @@ public class ShimmerFileTransferClient{
                             int chunkSizeForThisChunk = ((totalBytes[1] & 0xFF) << 8) | (totalBytes[0] & 0xFF);
                             byte[] chunkData = readExact(in, chunkSizeForThisChunk);
 
-//                             Log.d(TAG, "Chunk number (raw bytes): " + String.format("%02X %02X", chunkNumBytes[0], chunkNumBytes[1])+
-//                                    ", Total bytes (raw bytes): " + String.format("%02X %02X", totalBytes[0], totalBytes[1]) +
-//                                    ", Chunk size: " + chunkSizeForThisChunk);
+                            Log.d(TAG, "Chunk number (raw bytes): " + String.format("%02X %02X", chunkNumBytes[0], chunkNumBytes[1])+
+                                   ", Total bytes (raw bytes): " + String.format("%02X %02X", totalBytes[0], totalBytes[1]) +
+                                   ", Chunk size: " + chunkSizeForThisChunk);
 
                             // Write ASCII-decoded data to the ASCII file
                             for (byte b : chunkData) {
@@ -362,14 +362,19 @@ public class ShimmerFileTransferClient{
                                     String.format("%02X %02X %02X %02X", ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
 
                             // Wait for response with timeout
+                            Log.d(TAG, "--> [DIAGNOSTIC] Entering 5-second wait loop (Attempt " + (retryCount + 1) + ")");
                             long startTime = System.currentTimeMillis();
                             while (System.currentTimeMillis() - startTime < 5000) { // 5 seconds
-                                if (in.available() > 0) {
+                                int availableBytes = in.available(); // Check for partial data
+                                if (availableBytes > 0) {
+                                    Log.d(TAG, "--> [DIAGNOSTIC] Data available! Bytes in stream: " + availableBytes);
                                     gotResponse = true;
                                     break;
                                 }
                                 try { Thread.sleep(100); } catch (InterruptedException ignored) {}
                             }
+                            Log.d(TAG, "--> [DIAGNOSTIC] Exited 5-second wait loop.");
+
                             if (!gotResponse) {
                                 retryCount++;
                                 Log.w(TAG, " No response after ACK, resending ACK (attempt " + (retryCount+1) + ")");
@@ -384,7 +389,7 @@ public class ShimmerFileTransferClient{
                             db.delete("files", "FILE_PATH=?", new String[]{outputFile.getAbsolutePath()});
                             db.close();
 
-                            clearTransferProgressStateAndNotifyUI("No response after ACK, restarting after 1:00", 60);
+                            clearTransferProgressStateAndNotifyUI("No response after ACK, restarting after 1:00", 60); // <-- 60 SECOND RETRY
 
                             // Schedule restart after 1 minute
                             new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
@@ -434,6 +439,10 @@ public class ShimmerFileTransferClient{
                         }
                     }
                 } catch (IOException e) {
+                    Log.e(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                    Log.e(TAG, "!!! CHUNK-LEVEL IOException. Hard failure during active file writing.");
+                    Log.e(TAG, "!!! This means the connection died while processing chunks.");
+                    Log.e(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
                     Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
                     crashlytics.recordException(e);
 
@@ -483,6 +492,10 @@ public class ShimmerFileTransferClient{
                 context.getApplicationContext().sendBroadcast(progressIntent);
             }
         } catch (IOException | InterruptedException e) {
+            Log.e(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            Log.e(TAG, "!!! TOP-LEVEL IOException. Hard failure outside the file writing loop.");
+            Log.e(TAG, "!!! Bypassing 'soft' ACK retry logic and triggering a 5-second restart.");
+            Log.e(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
             Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
             crashlytics.log("Error during file transfer: " + e.getMessage());
             crashlytics.recordException(e);
@@ -581,25 +594,51 @@ public class ShimmerFileTransferClient{
     }
 
     public boolean uploadFileToS3(File file) {
-        Log.d(SYNC_TAG, "Uploading file: " + file.getName());
+        Log.d(SYNC_TAG, "Starting upload process for: " + file.getName());
         OkHttpClient client = new OkHttpClient();
-        RequestBody fileBody = RequestBody.create(file, MediaType.parse("text/plain"));
-        MultipartBody requestBody = new MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("file", file.getName(), fileBody)
-                .build();
 
-        Request request = new Request.Builder()
-                .url("https://odb777ddnc.execute-api.us-east-2.amazonaws.com/upload/")
-                .post(requestBody)
-                .build();
+        try {
+            // --- STEP 1: Get the pre-signed upload URL from your API ---
+            String generateUrlEndpoint = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/generate-upload-url/?filename=" + file.getName();
+            Request getUrlRequest = new Request.Builder()
+                    .url(generateUrlEndpoint)
+                    .get()
+                    .build();
 
-        try (Response response = client.newCall(request).execute()) {
-            boolean success = response.isSuccessful();
-            Log.d(SYNC_TAG, "Upload " + (success ? "successful" : "failed") + " for: " + file.getName());
-            return success;
-        } catch (IOException e) {
-            Log.e(SYNC_TAG, "Upload failed: " + e.getMessage());
+            String uploadUrl;
+            Log.d(SYNC_TAG, "Requesting pre-signed URL for: " + file.getName());
+            try (Response getUrlResponse = client.newCall(getUrlRequest).execute()) {
+                if (!getUrlResponse.isSuccessful() || getUrlResponse.body() == null) {
+                    Log.e(SYNC_TAG, "Failed to get pre-signed URL. Server responded with: " + getUrlResponse.code());
+                    return false;
+                }
+
+                JSONObject responseJson = new JSONObject(getUrlResponse.body().string());
+                uploadUrl = responseJson.getString("upload_url");
+                Log.d(SYNC_TAG, "Successfully got pre-signed URL.");
+            }
+
+            // --- STEP 2: Upload the file directly to S3 using the pre-signed URL ---
+            Log.d(SYNC_TAG, "Uploading file directly to S3...");
+            RequestBody fileBody = RequestBody.create(file, MediaType.parse("text/plain"));
+            Request uploadRequest = new Request.Builder()
+                    .url(uploadUrl)
+                    .put(fileBody)
+                    .build();
+
+            try (Response uploadResponse = client.newCall(uploadRequest).execute()) {
+                boolean success = uploadResponse.isSuccessful();
+                if (success) {
+                    Log.d(SYNC_TAG, "Upload successful for: " + file.getName());
+                } else {
+                    Log.e(SYNC_TAG, "Direct S3 upload failed with code: " + uploadResponse.code() + " and message: " + uploadResponse.message());
+                }
+                return success;
+            }
+
+        } catch (Exception e) {
+            Log.e(SYNC_TAG, "An exception occurred during the upload process: " + e.getMessage(), e);
+            crashlytics.recordException(e);
             return false;
         }
     }
