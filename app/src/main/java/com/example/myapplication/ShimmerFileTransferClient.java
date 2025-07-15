@@ -564,6 +564,10 @@ public class ShimmerFileTransferClient{
                     unsyncedFiles.add(file);
                     Log.d(SYNC_TAG, " Unsynced file: " + file.getName());
                 }
+                else {
+                    Log.w(SYNC_TAG, "File listed in DB but does not exist on disk: " + path);
+                    db.delete("files", "FILE_PATH=?", new String[]{path});
+                }
             }
         }
         db.close();
