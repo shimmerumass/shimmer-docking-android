@@ -503,6 +503,12 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
+            // ADD THIS CHECK
+            if (filesToUpload.isEmpty() && !localUnsynced.isEmpty()) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "All local files are already on the server.", Toast.LENGTH_SHORT).show());
+                return; // Stop the process
+            }
+
             runOnUiThread(() -> {
                 fileListAdapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1) {
                     @Override
