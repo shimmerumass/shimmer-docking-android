@@ -62,7 +62,7 @@ public class ShimmerFileTransferClient{
     private static final byte TRANSFER_END_PACKET      = (byte) 0xFE;
 
     // Configuration
-    private static final int CHUNK_GROUP_SIZE = 8;
+    private static final int CHUNK_GROUP_SIZE = 1;
     private static final int MAX_CHUNK_SIZE   = 240;
 
     public void transferOneFileFullFlow(String macAddress) {
@@ -353,35 +353,40 @@ public class ShimmerFileTransferClient{
                                 ackStatusToSend
                         };
 
-                        int retryCount = 0;
+                        // --- ACK Retry Protocol ---
                         boolean gotResponse = false;
-                        while (retryCount < 3 && !gotResponse) {
+                        int maxRetries = 1; // 1 initial attempt + 1 retry = 20 seconds total wait
+
+                        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+                            // Send the ACK packet
                             out.write(ackPacket);
                             out.flush();
-                            Log.d(TAG,  " Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet (retry " + retryCount + "): " +
-                                    String.format("%02X %02X %02X %02X", ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
 
-                            // Wait for response with timeout
-                            Log.d(TAG, "--> [DIAGNOSTIC] Entering 5-second wait loop (Attempt " + (retryCount + 1) + ")");
+                            if (attempt == 0) {
+                                Log.d(TAG, "Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet: " +
+                                        String.format("%02X %02X %02X %02X", ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
+                            } else {
+                                Log.w(TAG, "No response. Retrying ACK send (Attempt " + attempt + " of " + maxRetries + ")");
+                            }
+
+                            // Wait for response with a 10-second timeout
                             long startTime = System.currentTimeMillis();
-                            while (System.currentTimeMillis() - startTime < 5000) { // 5 seconds
-                                int availableBytes = in.available(); // Check for partial data
-                                if (availableBytes > 0) {
-                                    Log.d(TAG, "--> [DIAGNOSTIC] Data available! Bytes in stream: " + availableBytes);
+                            while (System.currentTimeMillis() - startTime < 10000) { // 10 seconds
+                                // Wait for at least the 5-byte chunk header to be available.
+                                if (in.available() >= 5) {
                                     gotResponse = true;
-                                    break;
+                                    break; // Exit the inner while loop
                                 }
                                 try { Thread.sleep(100); } catch (InterruptedException ignored) {}
                             }
-                            Log.d(TAG, "--> [DIAGNOSTIC] Exited 5-second wait loop.");
 
-                            if (!gotResponse) {
-                                retryCount++;
-                                Log.w(TAG, " No response after ACK, resending ACK (attempt " + (retryCount+1) + ")");
+                            if (gotResponse) {
+                                break; // Exit the outer for loop if we got a response
                             }
                         }
+
                         if (!gotResponse) {
-                            Log.e(TAG, " No response after 3 ACK retries, scheduling transfer restart in 1 minute.");
+                            Log.e(TAG, "No response after " + maxRetries + " ACK retries. Scheduling transfer restart in 1 minute.");
                             // Delete incomplete file and DB entry
                             if (outputFile.exists()) outputFile.delete();
                             FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
@@ -389,15 +394,16 @@ public class ShimmerFileTransferClient{
                             db.delete("files", "FILE_PATH=?", new String[]{outputFile.getAbsolutePath()});
                             db.close();
 
-                            clearTransferProgressStateAndNotifyUI("No response after ACK, restarting after 1:00", 60); // <-- 60 SECOND RETRY
+                            clearTransferProgressStateAndNotifyUI("No response from sensor, restarting after 1:00", 60);
 
                             // Schedule restart after 1 minute
                             new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
                                 clearTransferProgressStateAndNotifyUI("", 0); // Clear error message before restart
                                 new Thread(() -> transferOneFileFullFlow(macAddress)).start();
                             }, 60_000);
-                            return;
+                            return; // Exit the transfer method
                         }
+                        // --- END OF ACK Retry Protocol ---
 
                         // Log progress to Firebase
                         Bundle progressBundle = new Bundle();
@@ -626,7 +632,7 @@ public class ShimmerFileTransferClient{
                     .put(fileBody)
                     .build();
 
-            try (Response uploadResponse = client.newCall(uploadRequest).execute()) {
+            try (Response uploadResponse = client.newCall(uploadRequest).
                 boolean success = uploadResponse.isSuccessful();
                 if (success) {
                     Log.d(SYNC_TAG, "Upload successful for: " + file.getName());
