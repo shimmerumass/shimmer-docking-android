@@ -42,8 +42,14 @@
     android:exported="false"
     android:foregroundServiceType="location|connectedDevice"/>
 
-        <service
+    <service
             android:name=".TransferService"
+            android:foregroundServiceType="dataSync|connectedDevice"
+            android:exported="false"
+            tools:ignore="ForegroundServicePermission" />
+
+    <service
+            android:name=".SyncService"
             android:foregroundServiceType="dataSync|connectedDevice"
             android:exported="false"
             tools:ignore="ForegroundServicePermission" />

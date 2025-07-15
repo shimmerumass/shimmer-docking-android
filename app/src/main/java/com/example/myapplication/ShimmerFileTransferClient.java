@@ -26,12 +26,13 @@ import android.os.Bundle;
 import com.google.firebase.analytics.FirebaseAnalytics;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
 
-import okhttp3.*; // Add at the top if not present
+import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class ShimmerFileTransferClient{
     private static final String TAG = "ShimmerTransfer"; // General Logcat tag
@@ -63,7 +64,6 @@ public class ShimmerFileTransferClient{
 
     // Configuration
     private static final int CHUNK_GROUP_SIZE = 1;
-    private static final int MAX_CHUNK_SIZE   = 240;
 
     public void transferOneFileFullFlow(String macAddress) {
         // Log the start of the file transfer
@@ -104,25 +104,24 @@ public class ShimmerFileTransferClient{
             Thread.sleep(1000);
 
             boolean connected = false;
-            int attempts = 0;
-            while (!connected && attempts < 3) {
+            for (int attempts = 1; attempts <= 3 && !connected; attempts++) {
                 try {
                     socket.connect();
                     connected = true;
                 } catch (IOException e) {
-                    attempts++;
-                    Log.e(TAG, "Socket connect attempt " + attempts + " failed", e);
+                    Log.e(TAG, "Socket connect attempt " + attempts + " failed.", e);
                     crashlytics.log("Socket connect attempt " + attempts + " failed");
                     crashlytics.recordException(e);
-                    Thread.sleep(1000);
+                    if (attempts < 3) Thread.sleep(1000);
                 }
             }
+
             if (!connected) {
-                Log.e(TAG, "Unable to connect to sensor after retries");
-                crashlytics.log("Unable to connect to sensor after retries");
+                Log.e(TAG, "Unable to connect to sensor after 3 retries");
+                crashlytics.log("Unable to connect to sensor after 3 retries");
                 return;
             }
-            Log.d(TAG, "Connected to Shimmer");
+            Log.d(TAG, "Connected to Shimmer: " + macAddress);
             crashlytics.log("Connected to Shimmer");
 
             InputStream in = socket.getInputStream();
@@ -131,16 +130,16 @@ public class ShimmerFileTransferClient{
             // --- STEP 2: Request File Count ---
             out.write(new byte[]{LIST_FILES_COMMAND});
             out.flush();
-            Log.d(TAG, "Sent LIST_FILES_COMMAND (0xD0)");
-            crashlytics.log("Sent LIST_FILES_COMMAND (0xD0)");
+            Log.d(TAG, "Sent LIST_FILES_COMMAND (D0)");
+            crashlytics.log("Sent LIST_FILES_COMMAND (D0)");
 
             int responseId = in.read();
             while (responseId == 0xFF) {
                 responseId = in.read();
             }
             if (responseId != (FILE_LIST_RESPONSE & 0xFF)) {
-                Log.e(TAG, "Expected FILE_LIST_RESPONSE (0xD3) but got: " + String.format("%02X", responseId));
-                crashlytics.log("Expected FILE_LIST_RESPONSE (0xD3) but got: " + String.format("%02X", responseId));
+                Log.e(TAG, "Expected FILE_LIST_RESPONSE (D3) but got: " + String.format("%02X", responseId));
+                crashlytics.log("Expected FILE_LIST_RESPONSE (D3) but got: " + String.format("%02X", responseId));
 
                 clearTransferProgressStateAndNotifyUI("Unexpected header, restarting after 1:00", 60);
 
@@ -199,7 +198,7 @@ public class ShimmerFileTransferClient{
                     startByte = in.read();
                 }
                 if (startByte != (TRANSFER_START_PACKET & 0xFF)) {
-                    Log.e(TAG, "Expected TRANSFER_START_PACKET (0xFD) but got: " + String.format("%02X", startByte));
+                    Log.e(TAG, "Expected TRANSFER_START_PACKET (FD) but got: " + String.format("%02X", startByte));
                     return;
                 }
 
@@ -530,7 +529,7 @@ public class ShimmerFileTransferClient{
                 }
                 socket = null;
             }
-            clearTransferProgressState();
+            clearTransferProgressStateAndNotifyUI("", 0); // Clears UI state without an error message
         }
     }
 
@@ -540,7 +539,7 @@ public class ShimmerFileTransferClient{
         while (totalRead < len) {
             int read = in.read(buffer, totalRead, len - totalRead);
             if (read == -1) {
-                throw new EOFException("Stream ended early");
+                throw new EOFException("Stream ended unexpectedly. Needed " + len + " bytes, but only got " + totalRead);
             }
             totalRead += read;
         }
@@ -553,7 +552,7 @@ public class ShimmerFileTransferClient{
 
 
     public List<File> getLocalUnsyncedFiles() {
-        Log.d(SYNC_TAG, " Querying local DB for unsynced files...");
+        Log.d(SYNC_TAG, "Querying local DB for unsynced files...");
         FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         List<File> unsyncedFiles = new ArrayList<>();
@@ -572,8 +571,10 @@ public class ShimmerFileTransferClient{
     }
 
     public List<String> getMissingFilesOnS3(List<File> localFiles) {
-        Log.d(SYNC_TAG, " Checking which files are missing on S3...");
+        Log.d(SYNC_TAG, "Checking which of " + localFiles.size() + " local files are missing on S3...");
         List<String> missing = new ArrayList<>();
+        if (localFiles.isEmpty()) return missing;
+
         try {
             OkHttpClient client = new OkHttpClient();
             JSONArray filenames = new JSONArray();
@@ -586,64 +587,54 @@ public class ShimmerFileTransferClient{
                     .build();
 
             Response response = client.newCall(request).execute();
-            if (!response.isSuccessful()) return missing;
+            if (!response.isSuccessful() || response.body() == null) {
+                Log.e(SYNC_TAG, "Error checking missing files, server responded with: " + response.code());
+                return localFiles.stream().map(File::getName).collect(Collectors.toList());
+            }
             JSONObject result = new JSONObject(response.body().string());
             JSONArray missingArr = result.getJSONArray("missing_files");
             for (int i = 0; i < missingArr.length(); i++) {
                 missing.add(missingArr.getString(i));
-                Log.d(SYNC_TAG,  " Missing on S3: " + missingArr.getString(i));
             }
+            Log.d(SYNC_TAG, "Found " + missing.size() + " files missing on S3.");
         } catch (Exception e) {
-            Log.e(SYNC_TAG,  " Error checking missing files: " + e.getMessage());
+            Log.e(SYNC_TAG, "Error checking missing files: " + e.getMessage());
         }
         return missing;
     }
 
     public boolean uploadFileToS3(File file) {
-        Log.d(SYNC_TAG, "Starting upload process for: " + file.getName());
+        Log.d(SYNC_TAG, "Starting S3 upload for: " + file.getName());
         OkHttpClient client = new OkHttpClient();
-
         try {
-            // --- STEP 1: Get the pre-signed upload URL from your API ---
-            String generateUrlEndpoint = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/generate-upload-url/?filename=" + file.getName();
             Request getUrlRequest = new Request.Builder()
-                    .url(generateUrlEndpoint)
+                    .url("https://odb777ddnc.execute-api.us-east-2.amazonaws.com/generate-upload-url/?filename=" + file.getName())
                     .get()
                     .build();
 
             String uploadUrl;
-            Log.d(SYNC_TAG, "Requesting pre-signed URL for: " + file.getName());
             try (Response getUrlResponse = client.newCall(getUrlRequest).execute()) {
                 if (!getUrlResponse.isSuccessful() || getUrlResponse.body() == null) {
                     Log.e(SYNC_TAG, "Failed to get pre-signed URL. Server responded with: " + getUrlResponse.code());
                     return false;
                 }
-
-                JSONObject responseJson = new JSONObject(getUrlResponse.body().string());
-                uploadUrl = responseJson.getString("upload_url");
-                Log.d(SYNC_TAG, "Successfully got pre-signed URL.");
+                uploadUrl = new JSONObject(getUrlResponse.body().string()).getString("upload_url");
             }
 
-            // --- STEP 2: Upload the file directly to S3 using the pre-signed URL ---
-            Log.d(SYNC_TAG, "Uploading file directly to S3...");
             RequestBody fileBody = RequestBody.create(file, MediaType.parse("text/plain"));
-            Request uploadRequest = new Request.Builder()
-                    .url(uploadUrl)
-                    .put(fileBody)
-                    .build();
+            Request uploadRequest = new Request.Builder().url(uploadUrl).put(fileBody).build();
 
-            try (Response uploadResponse = client.newCall(uploadRequest).
-                boolean success = uploadResponse.isSuccessful();
-                if (success) {
-                    Log.d(SYNC_TAG, "Upload successful for: " + file.getName());
+            try (Response uploadResponse = client.newCall(uploadRequest).execute()) {
+                if (uploadResponse.isSuccessful()) {
+                    Log.d(SYNC_TAG, "S3 upload successful for: " + file.getName());
+                    return true;
                 } else {
-                    Log.e(SYNC_TAG, "Direct S3 upload failed with code: " + uploadResponse.code() + " and message: " + uploadResponse.message());
+                    Log.e(SYNC_TAG, "S3 upload failed with code: " + uploadResponse.code());
+                    return false;
                 }
-                return success;
             }
-
         } catch (Exception e) {
-            Log.e(SYNC_TAG, "An exception occurred during the upload process: " + e.getMessage(), e);
+            Log.e(SYNC_TAG, "Exception during S3 upload: " + e.getMessage(), e);
             crashlytics.recordException(e);
             return false;
         }
@@ -659,19 +650,13 @@ public class ShimmerFileTransferClient{
         db.close();
     }
 
-    private void clearTransferProgressState() {
-        Log.d(TAG, "[CLEAR_STATE] Clearing transfer progress state from SharedPreferences");
-        SharedPreferences prefs = context.getSharedPreferences("app_state", Context.MODE_PRIVATE);
-        prefs.edit()
-            .remove("transfer_progress")
-            .remove("transfer_total")
-            .remove("transfer_filename")
-            .remove("progress_visibility")
-            .apply();
-    }
-
+    /**
+     * Clears transfer progress from SharedPreferences and sends a broadcast to update the UI.
+     * @param message The error message to display.
+     * @param retrySeconds The number of seconds until a retry will be attempted.
+     */
     private void clearTransferProgressStateAndNotifyUI(String message, int retrySeconds) {
-        Log.d(TAG, "[CLEAR_STATE] Clearing transfer progress state from SharedPreferences (reason: " + message + ")");
+        Log.d(TAG, "[CLEAR_STATE] Clearing transfer progress state (reason: " + message + ")");
         SharedPreferences prefs = context.getSharedPreferences("app_state", Context.MODE_PRIVATE);
         prefs.edit()
             .remove("transfer_progress")
@@ -680,12 +665,10 @@ public class ShimmerFileTransferClient{
             .remove("progress_visibility")
             .apply();
 
-        // Send broadcast to update UI with error message and countdown
         Intent intent = new Intent("com.example.myapplication.TRANSFER_ERROR");
         intent.setPackage(context.getPackageName());
         intent.putExtra("error_message", message);
         intent.putExtra("retry_seconds", retrySeconds);
         context.getApplicationContext().sendBroadcast(intent);
     }
-
 }
