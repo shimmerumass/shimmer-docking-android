@@ -3,6 +3,7 @@ package com.example.myapplication;
 import com.google.android.material.button.MaterialButton;
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -58,9 +59,13 @@ public class MainActivity extends AppCompatActivity {
     private Button syncButton;
     private ListView fileListView;
     private ArrayAdapter<String> fileListAdapter;
-    private List<File> filesToUpload;
-    private List<Boolean> uploadStatus;
-    private List<Boolean> uploading;
+
+    // --- FIX: Initialize lists to prevent NullPointerException ---
+    private List<File> filesToUpload = new ArrayList<>();
+    private List<Boolean> uploadStatus = new ArrayList<>();
+    private List<Boolean> uploading = new ArrayList<>();
+    // --- END OF FIX ---
+
     private String selectedMac = null;
     private FirebaseAnalytics firebaseAnalytics;
     private Button transferButton;
@@ -489,24 +494,41 @@ public class MainActivity extends AppCompatActivity {
         ShimmerFileTransferClient client = new ShimmerFileTransferClient(this);
 
         new Thread(() -> {
+            // Layer 1: Get all files marked as unsynced in the local DB.
             List<File> localUnsynced = client.getLocalUnsyncedFiles();
+            if (localUnsynced.isEmpty()) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "No new files to sync.", Toast.LENGTH_SHORT).show());
+                return;
+            }
+
+            // Layer 2: Ask the server which of those files are actually missing.
             List<String> missingOnS3 = client.getMissingFilesOnS3(localUnsynced);
 
-            filesToUpload = new ArrayList<>();
-            uploadStatus = new ArrayList<>();
-            uploading = new ArrayList<>();
+            filesToUpload.clear();
+            uploadStatus.clear();
+            uploading.clear();
+
+            // --- MODIFIED LOGIC: UPLOAD OR CORRECT ---
             for (File f : localUnsynced) {
                 if (missingOnS3.contains(f.getName())) {
+                    // This file is genuinely missing on the server. Add it to the upload queue.
                     filesToUpload.add(f);
                     uploadStatus.add(false);
                     uploading.add(false);
+                } else {
+                    // The server already has this file, but our DB says SYNCED=0.
+                    // Correct the local database entry.
+                    Log.d("FileSync", "Correcting DB: Server has '" + f.getName() + "', marking as SYNCED=1.");
+                    client.markFileAsSynced(f);
                 }
             }
+            // --- END OF MODIFIED LOGIC ---
 
-            // ADD THIS CHECK
-            if (filesToUpload.isEmpty() && !localUnsynced.isEmpty()) {
+            // This check now correctly handles the case where all unsynced files
+            // were corrected, leaving nothing to upload.
+            if (filesToUpload.isEmpty()) {
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "All local files are already on the server.", Toast.LENGTH_SHORT).show());
-                return; // Stop the process
+                return;
             }
 
             runOnUiThread(() -> {
