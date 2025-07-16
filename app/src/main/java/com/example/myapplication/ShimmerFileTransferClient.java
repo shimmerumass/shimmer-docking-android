@@ -1,14 +1,25 @@
 package com.example.myapplication;
 
 import android.Manifest;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.Build;
+import android.os.Bundle;
 import android.provider.Settings;
 import android.util.Log;
+import android.widget.Toast;
+
+import com.google.firebase.analytics.FirebaseAnalytics;
+import com.google.firebase.crashlytics.FirebaseCrashlytics;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.EOFException;
 import java.io.File;
@@ -16,27 +27,20 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.UUID;
-
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothSocket;
-import android.os.Bundle;
-
-import com.google.firebase.analytics.FirebaseAnalytics;
-import com.google.firebase.crashlytics.FirebaseCrashlytics;
-
-import okhttp3.*;
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
-public class ShimmerFileTransferClient{
-    private static final String TAG = "ShimmerTransfer"; // General Logcat tag
-    private static final String FIREBASE_TAG = "FirebaseLogs"; // Firebase-specific Logcat tag
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+
+public class ShimmerFileTransferClient {
+    private static final String TAG = "ShimmerTransfer";
+    private static final String FIREBASE_TAG = "FirebaseLogs";
     private static final String SYNC_TAG = "FileSync";
     private FirebaseAnalytics firebaseAnalytics;
     private FirebaseCrashlytics crashlytics;
@@ -52,15 +56,15 @@ public class ShimmerFileTransferClient{
     }
 
     // Command identifiers
-    private static final byte LIST_FILES_COMMAND       = (byte) 0xD0;
-    private static final byte FILE_LIST_RESPONSE       = (byte) 0xD3;
-    private static final byte TRANSFER_FILE_COMMAND    = (byte) 0xD1;
+    private static final byte LIST_FILES_COMMAND = (byte) 0xD0;
+    private static final byte FILE_LIST_RESPONSE = (byte) 0xD3;
+    private static final byte TRANSFER_FILE_COMMAND = (byte) 0xD1;
     private static final byte READY_FOR_CHUNKS_COMMAND = (byte) 0xD2;
-    private static final byte CHUNK_DATA_ACK           = (byte) 0xD4;
-    private static final byte CHUNK_DATA_NACK          = (byte) 0xD5;
-    private static final byte TRANSFER_START_PACKET    = (byte) 0xFD;
-    private static final byte CHUNK_DATA_PACKET        = (byte) 0xFC;
-    private static final byte TRANSFER_END_PACKET      = (byte) 0xFE;
+    private static final byte CHUNK_DATA_ACK = (byte) 0xD4;
+    private static final byte CHUNK_DATA_NACK = (byte) 0xD5;
+    private static final byte TRANSFER_START_PACKET = (byte) 0xFD;
+    private static final byte CHUNK_DATA_PACKET = (byte) 0xFC;
+    private static final byte TRANSFER_END_PACKET = (byte) 0xFE;
 
     // Configuration
     private static final int CHUNK_GROUP_SIZE = 1;
@@ -119,6 +123,7 @@ public class ShimmerFileTransferClient{
             if (!connected) {
                 Log.e(TAG, "Unable to connect to sensor after 3 retries");
                 crashlytics.log("Unable to connect to sensor after 3 retries");
+                showToast("Failed to connect to sensor. Please check if it's on and in range.");
                 return;
             }
             Log.d(TAG, "Connected to Shimmer: " + macAddress);
@@ -386,6 +391,7 @@ public class ShimmerFileTransferClient{
 
                         if (!gotResponse) {
                             Log.e(TAG, "No response after " + maxRetries + " ACK retries. Scheduling transfer restart in 1 minute.");
+                            showToast("Connection lost. No response from sensor.");
                             // Delete incomplete file and DB entry
                             if (outputFile.exists()) outputFile.delete();
                             FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
@@ -444,10 +450,8 @@ public class ShimmerFileTransferClient{
                         }
                     }
                 } catch (IOException e) {
-                    Log.e(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
                     Log.e(TAG, "!!! CHUNK-LEVEL IOException. Hard failure during active file writing.");
-                    Log.e(TAG, "!!! This means the connection died while processing chunks.");
-                    Log.e(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                    showToast("Network connection lost during transfer.");
                     Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
                     crashlytics.recordException(e);
 
@@ -497,10 +501,8 @@ public class ShimmerFileTransferClient{
                 context.getApplicationContext().sendBroadcast(progressIntent);
             }
         } catch (IOException | InterruptedException e) {
-            Log.e(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
             Log.e(TAG, "!!! TOP-LEVEL IOException. Hard failure outside the file writing loop.");
-            Log.e(TAG, "!!! Bypassing 'soft' ACK retry logic and triggering a 5-second restart.");
-            Log.e(TAG, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            showToast("Network error. Please try again.");
             Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
             crashlytics.log("Error during file transfer: " + e.getMessage());
             crashlytics.recordException(e);
@@ -596,16 +598,21 @@ public class ShimmerFileTransferClient{
                 return localFiles.stream().map(File::getName).collect(Collectors.toList());
             }
             JSONObject result = new JSONObject(response.body().string());
-            JSONArray missingArr = result.getJSONArray("missing_files");
+              JSONArray missingArr = result.getJSONArray("missing_files");
             for (int i = 0; i < missingArr.length(); i++) {
                 missing.add(missingArr.getString(i));
             }
             Log.d(SYNC_TAG, "Found " + missing.size() + " files missing on S3.");
         } catch (Exception e) {
             Log.e(SYNC_TAG, "Error checking missing files: " + e.getMessage());
+            showToast("Cloud sync failed: No network connection");
+            // On network error, assume all files are missing to be safe.
+            // This prevents them from being incorrectly marked as synced.
+            return localFiles.stream().map(File::getName).collect(Collectors.toList());
         }
         return missing;
     }
+
 
     public boolean uploadFileToS3(File file) {
         Log.d(SYNC_TAG, "Starting S3 upload for: " + file.getName());
@@ -639,6 +646,7 @@ public class ShimmerFileTransferClient{
             }
         } catch (Exception e) {
             Log.e(SYNC_TAG, "Exception during S3 upload: " + e.getMessage(), e);
+            showToast("File upload failed: No network connection");
             crashlytics.recordException(e);
             return false;
         }
@@ -674,5 +682,9 @@ public class ShimmerFileTransferClient{
         intent.putExtra("error_message", message);
         intent.putExtra("retry_seconds", retrySeconds);
         context.getApplicationContext().sendBroadcast(intent);
+    }
+
+    private void showToast(String message) {
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show();
     }
 }
