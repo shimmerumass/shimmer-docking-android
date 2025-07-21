@@ -56,18 +56,18 @@ public class ShimmerFileTransferClient {
     }
 
     // Command identifiers
-    private static final byte LIST_FILES_COMMAND = (byte) 0xD0;
-    private static final byte FILE_LIST_RESPONSE = (byte) 0xD3;
-    private static final byte TRANSFER_FILE_COMMAND = (byte) 0xD1;
+    private static final byte LIST_FILES_COMMAND       = (byte) 0xD0;
+    private static final byte FILE_LIST_RESPONSE       = (byte) 0xD3;
+    private static final byte TRANSFER_FILE_COMMAND    = (byte) 0xD1;
     private static final byte READY_FOR_CHUNKS_COMMAND = (byte) 0xD2;
-    private static final byte CHUNK_DATA_ACK = (byte) 0xD4;
-    private static final byte CHUNK_DATA_NACK = (byte) 0xD5;
-    private static final byte TRANSFER_START_PACKET = (byte) 0xFD;
-    private static final byte CHUNK_DATA_PACKET = (byte) 0xFC;
-    private static final byte TRANSFER_END_PACKET = (byte) 0xFE;
+    private static final byte CHUNK_DATA_ACK           = (byte) 0xD4;
+    private static final byte CHUNK_DATA_NACK          = (byte) 0xD5;
+    private static final byte TRANSFER_START_PACKET    = (byte) 0xFD;
+    private static final byte CHUNK_DATA_PACKET        = (byte) 0xFC;
+    private static final byte TRANSFER_END_PACKET      = (byte) 0xFE;
 
     // Configuration
-    private static final int CHUNK_GROUP_SIZE = 1;
+    private static final int CHUNK_GROUP_SIZE = 16;
 
     public void transferOneFileFullFlow(String macAddress) {
         // Log the start of the file transfer
@@ -359,7 +359,7 @@ public class ShimmerFileTransferClient {
 
                         // --- ACK Retry Protocol ---
                         boolean gotResponse = false;
-                        int maxRetries = 1; // 1 initial attempt + 1 retry = 20 seconds total wait
+                        int maxRetries = 2; // 1 initial attempt + 2 retries = 30 seconds total wait
 
                         for (int attempt = 0; attempt <= maxRetries; attempt++) {
                             // Send the ACK packet
