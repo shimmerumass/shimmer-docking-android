@@ -549,7 +549,6 @@ public class ShimmerFileTransferClient {
                 }
                 socket = null;
             }
-            clearTransferProgressStateAndNotifyUI("", 0); // Clears UI state without an error message
         }
     }
 
