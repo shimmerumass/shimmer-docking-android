@@ -150,8 +150,14 @@ public class ShimmerFileTransferClient {
 
                 // Schedule restart after 1 minute
                 new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
-                    clearTransferProgressStateAndNotifyUI("", 0); // Clear error message before restart
-                    new Thread(() -> transferOneFileFullFlow(macAddress)).start();
+                    clearTransferProgressStateAndNotifyUI("", 0);
+                    Intent transferIntent = new Intent(context, TransferService.class);
+                    transferIntent.putExtra(TransferService.EXTRA_MAC_ADDRESS, macAddress);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(transferIntent);
+                    } else {
+                        context.startService(transferIntent);
+                    }
                 }, 60_000);
 
                 return;
@@ -302,8 +308,14 @@ public class ShimmerFileTransferClient {
 
                                 // Schedule restart after 1 minute
                                 new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
-                                    clearTransferProgressStateAndNotifyUI("", 0); // Clear error message before restart
-                                    new Thread(() -> transferOneFileFullFlow(macAddress)).start();
+                                    clearTransferProgressStateAndNotifyUI("", 0);
+                                    Intent transferIntent = new Intent(context, TransferService.class);
+                                    transferIntent.putExtra(TransferService.EXTRA_MAC_ADDRESS, macAddress);
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        context.startForegroundService(transferIntent);
+                                    } else {
+                                        context.startService(transferIntent);
+                                    }
                                 }, 60_000);
                                 return;
                             }
@@ -403,8 +415,14 @@ public class ShimmerFileTransferClient {
 
                             // Schedule restart after 1 minute
                             new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
-                                clearTransferProgressStateAndNotifyUI("", 0); // Clear error message before restart
-                                new Thread(() -> transferOneFileFullFlow(macAddress)).start();
+                                clearTransferProgressStateAndNotifyUI("", 0);
+                                Intent transferIntent = new Intent(context, TransferService.class);
+                                transferIntent.putExtra(TransferService.EXTRA_MAC_ADDRESS, macAddress);
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    context.startForegroundService(transferIntent);
+                                } else {
+                                    context.startService(transferIntent);
+                                }
                             }, 60_000);
                             return; // Exit the transfer method
                         }

@@ -160,7 +160,8 @@ public class MainActivity extends AppCompatActivity {
                 transferProgressBar.setVisibility(View.GONE);
                 if (countDownTimer != null) countDownTimer.cancel();
 
-                if (retrySeconds > 0) {
+                if (errorMessage != null && !errorMessage.isEmpty() && retrySeconds > 0) {
+                    // Show error and timer
                     countDownTimer = new android.os.CountDownTimer(retrySeconds * 1000, 1000) {
                         public void onTick(long millisUntilFinished) {
                             int secs = (int) (millisUntilFinished / 1000);
@@ -172,8 +173,15 @@ public class MainActivity extends AppCompatActivity {
                             transferProgressBar.setVisibility(View.VISIBLE);
                         }
                     }.start();
-                } else {
+                } else if (errorMessage != null && !errorMessage.isEmpty()) {
+                    // Show error without timer
                     progressText.setText(errorMessage);
+                    progressSection.setVisibility(View.VISIBLE);
+                    transferProgressBar.setVisibility(View.GONE);
+                } else {
+                    // Hide error UI
+                    progressSection.setVisibility(View.GONE);
+                    transferProgressBar.setVisibility(View.VISIBLE);
                 }
             });
         }
@@ -357,9 +365,7 @@ public class MainActivity extends AppCompatActivity {
                 transferProgressBar.setMax(total);
                 transferProgressBar.setProgress(progress);
                 progressText.setText(display);
-                if (progress >= total) {
-                    progressSection.setVisibility(View.GONE);
-                }
+                
             } else {
                 progressSection.setVisibility(View.GONE);
             }
