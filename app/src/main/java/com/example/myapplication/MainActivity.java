@@ -393,6 +393,97 @@ public class MainActivity extends AppCompatActivity {
                     .apply();
             // Hide or reset scan-related UI
         }
+
+        // Restore file sync state
+        String filesJson = prefs.getString("sync_files", "[]");
+        String statusJson = prefs.getString("sync_status", "[]");
+        String uploadingJson = prefs.getString("sync_uploading", "[]");
+
+        try {
+            JSONArray filesArray = new JSONArray(filesJson);
+            JSONArray statusArray = new JSONArray(statusJson);
+            JSONArray uploadingArray = new JSONArray(uploadingJson);
+
+            filesToUpload.clear();
+            uploadStatus.clear();
+            uploading.clear();
+
+            for (int i = 0; i < filesArray.length(); i++) {
+                String filePath = filesArray.getString(i);
+                boolean isUploaded = statusArray.optBoolean(i, false);
+                boolean isUploading = uploadingArray.optBoolean(i, false);
+
+                File file = new File(filePath);
+                if (file.exists()) {
+                    filesToUpload.add(file);
+                    uploadStatus.add(isUploaded);
+                    uploading.add(isUploading);
+                }
+            }
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+
+        if (!filesToUpload.isEmpty()) {
+            fileListAdapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1) {
+                @Override
+                public int getCount() {
+                    return filesToUpload != null ? filesToUpload.size() : 0;
+                }
+
+                @Override
+                public String getItem(int position) {
+                    File file = filesToUpload.get(position);
+                    if (uploadStatus.get(position)) {
+                        return "✅ " + file.getName();
+                    } else if (uploading.get(position)) {
+                        return "⏳ " + file.getName();
+                    } else {
+                        return "❌ " + file.getName(); // Show failed status
+                    }
+                }
+            };
+            fileListView.setAdapter(fileListAdapter);
+            filesToSyncSection.setVisibility(View.VISIBLE);
+        } else {
+            filesToSyncSection.setVisibility(View.GONE);
+        }
+
+        if (!isTransferServiceRunning()) {
+            // Defensive: clear transfer state if service is not running
+            prefs.edit()
+                    .remove("transfer_progress")
+                    .remove("transfer_total")
+                    .remove("transfer_filename")
+                    .remove("progress_visibility")
+                    .apply();
+            progressSection.setVisibility(View.GONE);
+        }
+        if (!isScanningServiceRunning()) {
+            // Defensive: clear scan state if service is not running
+            prefs.edit()
+                    .remove("scanning_status")
+                    .remove("remaining_time")
+                    .remove("scanned_devices")
+                    .apply();
+            // Hide or reset scan-related UI
+        }
+
+        String syncDisplayJson = prefs.getString("sync_display_list", "[]");
+        try {
+            JSONArray arr = new JSONArray(syncDisplayJson);
+            ArrayList<String> displayList = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                displayList.add(arr.getString(i));
+            }
+            if (!displayList.isEmpty()) {
+                fileListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, displayList);
+                fileListView.setAdapter(fileListAdapter);
+                filesToSyncSection.setVisibility(View.VISIBLE);
+            } else {
+                filesToSyncSection.setVisibility(View.GONE);
+            }
+        } catch (JSONException ignored) {}
     }
 
     @Override
@@ -444,6 +535,27 @@ public class MainActivity extends AppCompatActivity {
     private void persistSelectedMac(String mac) {
         SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
         prefs.edit().putString("selected_mac", mac).apply();
+    }
+
+    // Call this whenever you sync files
+    private void persistSyncState(List<File> files, List<Boolean> status, List<Boolean> uploading) {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
+        for (int i = 0; i < files.size(); i++) {
+            editor.putBoolean("file_" + i + "_status", status.get(i));
+            editor.putBoolean("file_" + i + "_uploading", uploading.get(i));
+        }
+        editor.putInt("files_to_upload_size", files.size());
+        editor.apply();
+    }
+
+    private void persistSyncDisplayList(ArrayAdapter<String> adapter) {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        JSONArray arr = new JSONArray();
+        for (int i = 0; i < adapter.getCount(); i++) {
+            arr.put(adapter.getItem(i));
+        }
+        prefs.edit().putString("sync_display_list", arr.toString()).apply();
     }
 
     private boolean hasPermissions() {
@@ -540,10 +652,7 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 fileListAdapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1) {
                     @Override
-                    public int getCount() {
-                        return filesToUpload != null ? filesToUpload.size() : 0;
-                    }
-
+                    public int getCount() { return filesToUpload != null ? filesToUpload.size() : 0; }
                     @Override
                     public String getItem(int position) {
                         File file = filesToUpload.get(position);
@@ -552,11 +661,14 @@ public class MainActivity extends AppCompatActivity {
                         } else if (uploading.get(position)) {
                             return "⏳ " + file.getName();
                         } else {
-                            return "❌ " + file.getName(); // Show failed status
+                            return "❌ " + file.getName();
                         }
                     }
                 };
                 fileListView.setAdapter(fileListAdapter);
+                filesToSyncSection.setVisibility(View.VISIBLE);
+
+                persistSyncDisplayList(fileListAdapter); // <-- Add this line
             });
 
             for (int i = 0; i < filesToUpload.size(); i++) {
@@ -573,11 +685,13 @@ public class MainActivity extends AppCompatActivity {
                         uploading.set(pos, false);
                         uploadStatus.set(pos, true);
                         fileListAdapter.notifyDataSetChanged();
+                        persistSyncDisplayList(fileListAdapter); // <-- Add this line
                     });
                 } else {
                     runOnUiThread(() -> {
                         uploading.set(pos, false);
                         fileListAdapter.notifyDataSetChanged();
+                        persistSyncState(filesToUpload, uploadStatus, uploading);
                         Toast.makeText(this, "Failed to upload: " + filesToUpload.get(pos).getName(), Toast.LENGTH_SHORT).show();
                     });
                 }
