@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
@@ -28,11 +29,11 @@ public class SyncService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("File Sync")
-                .setContentText("Preparing to sync files with the cloud...")
-                .setSmallIcon(R.drawable.ic_sync) // Ensure you have this drawable
+                .setContentText("Syncing files...")
+                .setSmallIcon(android.R.drawable.stat_sys_upload)
                 .build();
 
-        startForeground(2, notification); // Use a different ID from other services
+        startForeground(2, notification);
 
         new Thread(() -> {
             Log.d(TAG, "Sync service started.");
@@ -86,7 +87,7 @@ public class SyncService extends Service {
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(text)
-                .setSmallIcon(R.drawable.ic_sync) // Ensure you have this drawable
+                .setSmallIcon(android.R.drawable.stat_sys_upload)
                 .build();
         manager.notify(2, notification);
     }
@@ -115,5 +116,14 @@ public class SyncService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    public static void startSyncService(Context context) {
+        Intent syncIntent = new Intent(context, SyncService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(syncIntent);
+        } else {
+            context.startService(syncIntent);
+        }
     }
 }

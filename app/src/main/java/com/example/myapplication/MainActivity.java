@@ -469,6 +469,20 @@ public class MainActivity extends AppCompatActivity {
             // Hide or reset scan-related UI
         }
 
+        // --- CLEAR SYNC STATE IF SYNC SERVICE IS NOT RUNNING ---
+        if (!isSyncServiceRunning()) {
+            prefs.edit()
+                .remove("sync_files")
+                .remove("sync_status")
+                .remove("sync_uploading")
+                .remove("sync_display_list")
+                .apply();
+            filesToSyncSection.setVisibility(View.GONE);
+            fileListAdapter = null;
+            fileListView.setAdapter(null);
+        }
+
+        // --- Restore sync display list (only if not cleared above) ---
         String syncDisplayJson = prefs.getString("sync_display_list", "[]");
         try {
             JSONArray arr = new JSONArray(syncDisplayJson);
@@ -744,6 +758,16 @@ public class MainActivity extends AppCompatActivity {
         android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
         for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
             if ("com.example.myapplication.ScanningService".equals(service.service.getClassName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isSyncServiceRunning() {
+        android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if ("com.example.myapplication.SyncService".equals(service.service.getClassName())) {
                 return true;
             }
         }
