@@ -372,7 +372,7 @@ public class ShimmerFileTransferClient {
                         // --- ACK Retry Protocol ---
                        int retryCount = 0;
                     boolean gotResponse = false;
-                    while (retryCount < 3 && !gotResponse) {
+                    while (retryCount < 2 && !gotResponse) {
                         out.write(ackPacket);
                         out.flush();
                         Log.d(TAG,  " Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet (retry " + retryCount + "): " +
@@ -380,7 +380,7 @@ public class ShimmerFileTransferClient {
 
                         // Wait for response with timeout
                         long startTime = System.currentTimeMillis();
-                        while (System.currentTimeMillis() - startTime < 5000) { // 5 seconds
+                        while (System.currentTimeMillis() - startTime < 10000) { // 10 seconds
                             if (in.available() > 0) {
                                 gotResponse = true;
                                 break;
@@ -394,7 +394,7 @@ public class ShimmerFileTransferClient {
                     }
                     
                     if (!gotResponse) {
-                            Log.e(TAG, "No response after 3 ACK retries. Scheduling transfer restart in 1 minute.");
+                            Log.e(TAG, "No response after 2 ACK retries. Scheduling transfer restart in 1 minute.");
                             showToast("Connection lost. No response from sensor.");
                             // Delete incomplete file and DB entry
                             if (outputFile.exists()) outputFile.delete();
