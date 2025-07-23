@@ -370,39 +370,31 @@ public class ShimmerFileTransferClient {
                         };
 
                         // --- ACK Retry Protocol ---
-                        boolean gotResponse = false;
-                        int maxRetries = 2; // 1 initial attempt + 2 retries = 30 seconds total wait
+                       int retryCount = 0;
+                    boolean gotResponse = false;
+                    while (retryCount < 3 && !gotResponse) {
+                        out.write(ackPacket);
+                        out.flush();
+                        Log.d(TAG,  " Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet (retry " + retryCount + "): " +
+                                String.format("%02X %02X %02X %02X", ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
 
-                        for (int attempt = 0; attempt <= maxRetries; attempt++) {
-                            // Send the ACK packet
-                            out.write(ackPacket);
-                            out.flush();
-
-                            if (attempt == 0) {
-                                Log.d(TAG, "Sent " + (chunksAreValid ? "ACK" : "NACK") + " packet: " +
-                                        String.format("%02X %02X %02X %02X", ackPacket[0], ackPacket[1], ackPacket[2], ackPacket[3]));
-                            } else {
-                                Log.w(TAG, "No response. Retrying ACK send (Attempt " + attempt + " of " + maxRetries + ")");
+                        // Wait for response with timeout
+                        long startTime = System.currentTimeMillis();
+                        while (System.currentTimeMillis() - startTime < 5000) { // 5 seconds
+                            if (in.available() > 0) {
+                                gotResponse = true;
+                                break;
                             }
-
-                            // Wait for response with a 10-second timeout
-                            long startTime = System.currentTimeMillis();
-                            while (System.currentTimeMillis() - startTime < 10000) { // 10 seconds
-                                // Wait for at least the 5-byte chunk header to be available.
-                                if (in.available() >= 5) {
-                                    gotResponse = true;
-                                    break; // Exit the inner while loop
-                                }
-                                try { Thread.sleep(100); } catch (InterruptedException ignored) {}
-                            }
-
-                            if (gotResponse) {
-                                break; // Exit the outer for loop if we got a response
-                            }
+                            try { Thread.sleep(100); } catch (InterruptedException ignored) {}
                         }
-
                         if (!gotResponse) {
-                            Log.e(TAG, "No response after " + maxRetries + " ACK retries. Scheduling transfer restart in 1 minute.");
+                            retryCount++;
+                            Log.w(TAG, " No response after ACK, resending ACK (attempt " + (retryCount+1) + ")");
+                        }
+                    }
+                    
+                    if (!gotResponse) {
+                            Log.e(TAG, "No response after 3 ACK retries. Scheduling transfer restart in 1 minute.");
                             showToast("Connection lost. No response from sensor.");
                             // Delete incomplete file and DB entry
                             if (outputFile.exists()) outputFile.delete();
