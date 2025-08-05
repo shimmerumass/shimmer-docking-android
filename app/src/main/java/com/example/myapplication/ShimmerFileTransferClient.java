@@ -541,6 +541,9 @@ public class ShimmerFileTransferClient {
                 }
                 socket = null;
             }
+            Intent doneIntent = new Intent("com.example.myapplication.TRANSFER_DONE");
+            doneIntent.setPackage(context.getPackageName());
+            context.sendBroadcast(doneIntent);
         }
     }
 

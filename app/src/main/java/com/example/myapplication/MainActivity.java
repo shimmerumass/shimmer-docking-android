@@ -325,6 +325,46 @@ public class MainActivity extends AppCompatActivity {
     
 
         restoreUIState();
+
+        dockingManager = new DockingManager(this, new DockingManager.DockingCallback() {
+            @Override
+            public void onDocked() {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Shimmer docked!", Toast.LENGTH_SHORT).show());
+            }
+            @Override
+            public void onUndocked() {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Shimmer undocked!", Toast.LENGTH_SHORT).show());
+            }
+            @Override
+            public void onAmbiguous() {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ambiguous state, querying dock status...", Toast.LENGTH_SHORT).show());
+            }
+            @Override
+            public void onFileTransferStart() {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Starting file transfer...", Toast.LENGTH_SHORT).show());
+            }
+        });
+
+        // For demo/testing, start protocol on button click:
+        Button dockingButton = findViewById(R.id.dockingButton);
+        dockingButton.setOnClickListener(v -> {
+            Log.d("MainActivity", "Docking button pressed");
+
+            // Stop ScanningService if running
+            if (isScanningServiceRunning()) {
+                Log.d("MainActivity", "Stopping ScanningService before starting DockingService");
+                Intent stopScanIntent = new Intent(this, ScanningService.class);
+                stopService(stopScanIntent);
+            }
+
+            // Start DockingService
+            Intent dockingIntent = new Intent(this, DockingService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(dockingIntent);
+            } else {
+                startService(dockingIntent);
+            }
+        });
     }
 
     private void restoreUIState() {
@@ -795,4 +835,6 @@ public class MainActivity extends AppCompatActivity {
 
         notificationManager.notify(1001, builder.build());
     }
+
+    private DockingManager dockingManager;
 }

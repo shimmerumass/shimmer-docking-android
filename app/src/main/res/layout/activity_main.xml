@@ -205,6 +205,15 @@
                     android:layout_marginStart="8dp"
                     android:text="Sync to Cloud"
                     style="@style/Widget.Material3.Button.OutlinedButton" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/dockingButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:text="Start Docking Protocol"
+                    style="@style/Widget.Material3.Button.OutlinedButton" />
             </LinearLayout>
 
         </LinearLayout>

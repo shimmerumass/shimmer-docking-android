@@ -37,10 +37,10 @@
         </activity>
 
         <!-- Correct service declaration using foregroundServiceType -->
-        <service
-    android:name=".ScanningService"
-    android:exported="false"
-    android:foregroundServiceType="location|connectedDevice"/>
+    <service
+            android:name=".ScanningService"
+            android:exported="false"
+            android:foregroundServiceType="location|connectedDevice"/>
 
     <service
             android:name=".TransferService"
@@ -53,7 +53,12 @@
             android:foregroundServiceType="dataSync|connectedDevice"
             android:exported="false"
             tools:ignore="ForegroundServicePermission" />
-
+        
+    <service
+            android:name=".DockingService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            tools:ignore="ForegroundServicePermission" />
     </application>
 </manifest>
 
