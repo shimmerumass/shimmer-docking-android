@@ -47,6 +47,9 @@ public class MainActivity extends AppCompatActivity {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.FOREGROUND_SERVICE,
+            Manifest.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE,
+            Manifest.permission.POST_NOTIFICATIONS
     };
 
     private TextView timerText;
@@ -268,22 +271,11 @@ public class MainActivity extends AppCompatActivity {
             registerReceiver(transferErrorReceiver, new IntentFilter("com.example.myapplication.TRANSFER_ERROR"));
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(
-                        this,
-                        new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
-                        1002 // any request code
-                );
-            }
-        }
-
-        if (hasPermissions()) {
-            startScanningService();
-        } else {
+        if (!hasPermissions()) {
             ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
+            return;
         }
+        startScanningService();
 
         TextView userNameTextView = findViewById(R.id.user_name_text_view);
 
@@ -365,6 +357,9 @@ public class MainActivity extends AppCompatActivity {
                 startService(dockingIntent);
             }
         });
+
+        // Shows the Android version in a Toast
+        Toast.makeText(this, "Android version: " + Build.VERSION.RELEASE, Toast.LENGTH_LONG).show();
     }
 
     private void restoreUIState() {
@@ -621,6 +616,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startScanningService() {
+        if (!hasPermissions()) {
+            Toast.makeText(this, "Permissions not granted. Please grant permissions to start scanning.", Toast.LENGTH_SHORT).show();
+            return;
+        }
         Intent serviceIntent = new Intent(this, ScanningService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
@@ -777,8 +776,15 @@ public class MainActivity extends AppCompatActivity {
             if (granted) {
                 startScanningService();
             } else {
-                Toast.makeText(this, "Permissions are required to run the scanning service", Toast.LENGTH_LONG).show();
-                finish();
+                new androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Permissions Required")
+                    .setMessage("Permissions are required for scanning. Please grant them to continue.")
+                    .setPositiveButton("Retry", (dialog, which) -> {
+                        ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
+                    })
+                    .setNegativeButton("Exit", (dialog, which) -> finish())
+                    .setCancelable(false)
+                    .show();
             }
         }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
