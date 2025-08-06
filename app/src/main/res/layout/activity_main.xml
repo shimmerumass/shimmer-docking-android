@@ -25,7 +25,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="end"
-                android:paddingTop="2dp"
+                android:paddingTop="8dp"
                 android:paddingBottom="8dp"
                 android:paddingRight="8dp">
 
@@ -56,22 +56,28 @@
                     app:cornerRadius="28dp" />
             </LinearLayout>
 
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="?attr/colorSurfaceVariant"
+                android:layout_marginBottom="12dp" />
+
             <!-- Welcome -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 app:cardCornerRadius="18dp"
-                app:cardElevation="4dp"
+                app:cardElevation="6dp"
                 app:strokeColor="?attr/colorPrimary"
                 app:strokeWidth="1dp"
-                android:layout_marginBottom="20dp">
+                android:layout_marginBottom="24dp">
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/user_name_text_view"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
-                    android:padding="24dp"
+                    android:padding="28dp"
                     android:text="Welcome!"
                     android:textColor="?android:textColorPrimary"
                     android:textSize="26sp"
