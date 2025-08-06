@@ -193,9 +193,9 @@ public class MainActivity extends AppCompatActivity {
     private void updateThemeToggleIcon(MaterialButton themeToggleButton) {
         int currentNightMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
         if (currentNightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES) {
-            themeToggleButton.setText("🌒");
+            themeToggleButton.setText("🌙");
         } else {
-            themeToggleButton.setText("🌔");
+            themeToggleButton.setText("☀️");
         }
     }
 
@@ -359,8 +359,10 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Shows the Android version in a Toast
-        String phoneMac = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
-        Toast.makeText(this, "Android version: " + Build.VERSION.RELEASE + " Android Device ID (phoneMac): " + phoneMac, Toast.LENGTH_LONG).show();
+        if (savedInstanceState == null) {
+            String phoneMac = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+            Toast.makeText(this, "Android version: " + Build.VERSION.RELEASE + "\nDevice ID: " + phoneMac, Toast.LENGTH_LONG).show();
+        }
     }
 
     private void restoreUIState() {
