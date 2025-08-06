@@ -44,12 +44,12 @@ import java.util.List;
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE = 1001;
     private static final String[] REQUIRED_PERMISSIONS = {
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.FOREGROUND_SERVICE,
-            Manifest.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE,
-            Manifest.permission.POST_NOTIFICATIONS
+            Manifest.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE
     };
 
     private TextView timerText;
@@ -359,7 +359,8 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Shows the Android version in a Toast
-        Toast.makeText(this, "Android version: " + Build.VERSION.RELEASE, Toast.LENGTH_LONG).show();
+        String phoneMac = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+        Toast.makeText(this, "Android version: " + Build.VERSION.RELEASE + " Android Device ID (phoneMac): " + phoneMac, Toast.LENGTH_LONG).show();
     }
 
     private void restoreUIState() {
