@@ -21,6 +21,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -363,6 +364,17 @@ public class MainActivity extends AppCompatActivity {
             String phoneMac = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
             Toast.makeText(this, "Android version: " + Build.VERSION.RELEASE + "\nDevice ID: " + phoneMac, Toast.LENGTH_LONG).show();
         }
+
+        // Show the About dialog on first launch
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        boolean isFirstLaunch = prefs.getBoolean("is_first_launch", true);
+        if (isFirstLaunch) {
+            showAboutDialog();
+            prefs.edit().putBoolean("is_first_launch", false).apply();
+        }
+
+        MaterialButton aboutButton = findViewById(R.id.aboutButton);
+        aboutButton.setOnClickListener(v -> showAboutDialog());
     }
 
     private void restoreUIState() {
@@ -843,6 +855,34 @@ public class MainActivity extends AppCompatActivity {
                 .setAutoCancel(true);
 
         notificationManager.notify(1001, builder.build());
+    }
+
+    private void showAboutDialog() {
+        ScrollView scrollView = new ScrollView(this);
+        TextView aboutText = new TextView(this);
+        aboutText.setText(
+            "About Shimmer Sensor App\n\n" +
+            "This app helps you connect to your Shimmer sensor, transfer files, and sync data to the cloud.\n\n" +
+            "How to Operate:\n" +
+            "1. Make sure Bluetooth is enabled on your device.\n" +
+            "2. Tap 'Start Transfer' to begin transferring sensor data.\n" +
+            "3. Tap 'Sync to Cloud' to upload files.\n" +
+            "4. Tap 'Start Docking' to connect to a docked sensor.\n\n" +
+            "Accessibility:\n" +
+            "- Large buttons and text for easy use.\n" +
+            "- High contrast colors for readability.\n" +
+            "- Designed for older adults and stroke patients.\n\n" +
+            "If you need help, ask a caregiver or family member."
+        );
+        aboutText.setPadding(32, 32, 32, 32);
+        aboutText.setTextSize(18f);
+        scrollView.addView(aboutText);
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("About")
+            .setView(scrollView)
+            .setPositiveButton("Close", null)
+            .show();
     }
 
     private DockingManager dockingManager;
