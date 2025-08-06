@@ -8,6 +8,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -35,7 +36,16 @@ public class DockingService extends Service implements DockingManager.DockingCal
         Log.d("DockingService", "DockingService created");
         createNotificationChannel();
         startForeground(NOTIF_ID, buildNotification("Docking protocol running..."));
+
+        // Always use latest hours from SharedPreferences
+        SharedPreferences prefs = getSharedPreferences("docking_prefs", MODE_PRIVATE);
+        int startHour = prefs.getInt("night_start_hour", 20);
+        int endHour = prefs.getInt("night_end_hour", 9);
+
         dockingManager = new DockingManager(this, this);
+        dockingManager.nightStartHour = startHour;
+        dockingManager.nightEndHour = endHour;
+
         handler.post(dockingManager::startNightDockingFlow);
         registerReceiver(
             transferDoneReceiver,

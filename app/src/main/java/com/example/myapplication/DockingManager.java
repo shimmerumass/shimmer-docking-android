@@ -67,6 +67,7 @@ public class DockingManager {
     private boolean isNightWindow() {
         java.util.Calendar cal = java.util.Calendar.getInstance();
         int hour = cal.get(java.util.Calendar.HOUR_OF_DAY);
+        Log.d(TAG, "isNightWindow: now=" + hour + ", start=" + nightStartHour + ", end=" + nightEndHour);
         if (nightStartHour < nightEndHour) {
             return hour >= nightStartHour && hour < nightEndHour;
         } else {

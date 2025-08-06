@@ -253,6 +253,38 @@
                     style="@style/Widget.Material3.Button.OutlinedButton"
                     android:textSize="15sp" />
             </LinearLayout>
+
+            <!-- Docking Hours Section -->
+            <LinearLayout
+                android:id="@+id/dockingHoursSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:padding="12dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:id="@+id/dockingHoursText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Docking hours: 20:00 - 09:00"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:paddingEnd="12dp"/>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/changeDockingHoursButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Change"
+                    android:textSize="16sp"
+                    android:icon="@android:drawable/ic_menu_edit"
+                    app:iconPadding="8dp"
+                    android:contentDescription="Change docking hours"/>
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 </FrameLayout>

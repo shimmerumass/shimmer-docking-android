@@ -20,6 +20,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.NumberPicker;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -276,7 +277,10 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
             return;
         }
-        startScanningService();
+        // Only start scanning if DockingService is NOT running
+        if (!isDockingServiceRunning()) {
+            startScanningService();
+        }
 
         TextView userNameTextView = findViewById(R.id.user_name_text_view);
 
@@ -319,28 +323,17 @@ public class MainActivity extends AppCompatActivity {
 
         restoreUIState();
 
-        dockingManager = new DockingManager(this, new DockingManager.DockingCallback() {
-            @Override
-            public void onDocked() {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Shimmer docked!", Toast.LENGTH_SHORT).show());
-            }
-            @Override
-            public void onUndocked() {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Shimmer undocked!", Toast.LENGTH_SHORT).show());
-            }
-            @Override
-            public void onAmbiguous() {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ambiguous state, querying dock status...", Toast.LENGTH_SHORT).show());
-            }
-            @Override
-            public void onFileTransferStart() {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Starting file transfer...", Toast.LENGTH_SHORT).show());
-            }
-        });
-
         // For demo/testing, start protocol on button click:
         Button dockingButton = findViewById(R.id.dockingButton);
         dockingButton.setOnClickListener(v -> {
+            int now = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+            int start = getDockingStartHour();
+            int end = getDockingEndHour();
+            if (!isWithinDockingWindow(now, start, end)) {
+                Toast.makeText(this, "Docking protocol can only be started between " +
+                        String.format("%02d:00 and %02d:00", start, end), Toast.LENGTH_LONG).show();
+                return;
+            }
             Log.d("MainActivity", "Docking button pressed");
 
             // Stop ScanningService if running
@@ -375,6 +368,9 @@ public class MainActivity extends AppCompatActivity {
 
         MaterialButton aboutButton = findViewById(R.id.aboutButton);
         aboutButton.setOnClickListener(v -> showAboutDialog());
+
+        updateDockingHoursText();
+        findViewById(R.id.changeDockingHoursButton).setOnClickListener(v -> showDockingHoursPopup());
     }
 
     private void restoreUIState() {
@@ -835,6 +831,16 @@ public class MainActivity extends AppCompatActivity {
         return false;
     }
 
+    private boolean isDockingServiceRunning() {
+        android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if ("com.example.myapplication.DockingService".equals(service.service.getClassName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void showTransferCompletedNotification() {
         String channelId = "transfer_channel";
         String channelName = "Bluetooth Transfer";
@@ -885,5 +891,120 @@ public class MainActivity extends AppCompatActivity {
             .show();
     }
 
-    private DockingManager dockingManager;
+    // Docking hours popup and logic
+    private void showDockingHoursPopup() {
+        ScrollView scrollView = new ScrollView(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(32, 32, 32, 32);
+
+        TextView title = new TextView(this);
+        title.setText("Set Docking Protocol Hours");
+        title.setTextSize(20f);
+        title.setPadding(0, 0, 0, 24);
+        layout.addView(title);
+
+        // Start time picker
+        TextView startLabel = new TextView(this);
+        startLabel.setText("Start Time:");
+        layout.addView(startLabel);
+
+        LinearLayout startTimeLayout = new LinearLayout(this);
+        startTimeLayout.setOrientation(LinearLayout.HORIZONTAL);
+
+        final NumberPicker startHourPicker = new NumberPicker(this);
+        startHourPicker.setMinValue(1);
+        startHourPicker.setMaxValue(12);
+        int startHour24Value = getDockingStartHour();
+        int startHour12 = (startHour24Value == 0 || startHour24Value == 12) ? 12 : startHour24Value % 12;
+        startHourPicker.setValue(startHour12);
+        startTimeLayout.addView(startHourPicker);
+
+        final NumberPicker startAmPmPicker = new NumberPicker(this);
+        startAmPmPicker.setMinValue(0);
+        startAmPmPicker.setMaxValue(1);
+        startAmPmPicker.setDisplayedValues(new String[]{"AM", "PM"});
+        startAmPmPicker.setValue(startHour24Value < 12 ? 0 : 1);
+        startTimeLayout.addView(startAmPmPicker);
+
+        layout.addView(startTimeLayout);
+
+        // End time picker
+        TextView endLabel = new TextView(this);
+        endLabel.setText("End Time:");
+        layout.addView(endLabel);
+
+        LinearLayout endTimeLayout = new LinearLayout(this);
+        endTimeLayout.setOrientation(LinearLayout.HORIZONTAL);
+
+        final NumberPicker endHourPicker = new NumberPicker(this);
+        endHourPicker.setMinValue(1);
+        endHourPicker.setMaxValue(12);
+        int endHour24Value = getDockingEndHour();
+        int endHour12 = (endHour24Value == 0 || endHour24Value == 12) ? 12 : endHour24Value % 12;
+        endHourPicker.setValue(endHour12);
+        endTimeLayout.addView(endHourPicker);
+
+        final NumberPicker endAmPmPicker = new NumberPicker(this);
+        endAmPmPicker.setMinValue(0);
+        endAmPmPicker.setMaxValue(1);
+        endAmPmPicker.setDisplayedValues(new String[]{"AM", "PM"});
+        endAmPmPicker.setValue(endHour24Value < 12 ? 0 : 1);
+        endTimeLayout.addView(endAmPmPicker);
+
+        layout.addView(endTimeLayout);
+
+        scrollView.addView(layout);
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Docking Protocol Hours")
+            .setView(scrollView)
+            .setPositiveButton("Save", (dialog, which) -> {
+                int startHour = startHourPicker.getValue();
+                int startAmPm = startAmPmPicker.getValue();
+                int endHour = endHourPicker.getValue();
+                int endAmPm = endAmPmPicker.getValue();
+                // Compute 24-hour format directly
+                int startHour24 = (startHour % 12) + (startAmPm == 1 ? 12 : 0);
+                int endHour24 = (endHour % 12) + (endAmPm == 1 ? 12 : 0);
+                setDockingHours(startHour24, endHour24);
+                updateDockingHoursText();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void updateDockingHoursText() {
+        TextView dockingHoursText = findViewById(R.id.dockingHoursText);
+        int start = getDockingStartHour();
+        int end = getDockingEndHour();
+        dockingHoursText.setText(String.format("Docking hours: %02d:00 - %02d:00", start, end));
+    }
+
+    private static final String PREFS_DOCKING = "docking_prefs";
+    private static final String KEY_START_HOUR = "night_start_hour";
+    private static final String KEY_END_HOUR = "night_end_hour";
+
+    private int getDockingStartHour() {
+        return getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE).getInt(KEY_START_HOUR, 20);
+    }
+    private int getDockingEndHour() {
+        return getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE).getInt(KEY_END_HOUR, 9);
+    }
+    private void setDockingHours(int start, int end) {
+        getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_START_HOUR, start)
+            .putInt(KEY_END_HOUR, end)
+            .apply();
+    }
+
+    private boolean isWithinDockingWindow(int currentHour, int startHour, int endHour) {
+        if (startHour == endHour) return false;
+        if (startHour < endHour) {
+            return currentHour >= startHour && currentHour < endHour;
+        } else {
+            return currentHour >= startHour || currentHour < endHour;
+        }
+    }
 }
