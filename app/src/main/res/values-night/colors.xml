@@ -1,7 +1,21 @@
 <resources>
-    <color name="md_theme_dark_primary">#D0BCFF</color>
-    <color name="md_theme_dark_onPrimary">#381E72</color>
-    <color name="md_theme_dark_secondary">#CCC2DC</color>
-    <color name="md_theme_dark_surface">#000000</color>      <!-- true black -->
-    <color name="md_theme_dark_background">#000000</color>   <!-- true black -->
+    <!-- Primary brand color (vivid purple) -->
+    <color name="md_theme_dark_primary">#3366CC</color>
+    <color name="md_theme_dark_onPrimary">#000000</color>
+    <!-- Secondary accent color (orange) -->
+    <color name="md_theme_dark_secondary">#FFB74D</color>
+    <color name="md_theme_dark_onSecondary">#000000</color>
+    <!-- Surface and background -->
+    <color name="md_theme_dark_surface">#121212</color>
+    <color name="md_theme_dark_surfaceVariant">#222222</color>
+    <color name="md_theme_dark_background">#000000</color>
+    <!-- Error color -->
+    <color name="md_theme_dark_error">#CF6679</color>
+    <color name="md_theme_dark_onError">#000000</color>
+    <!-- Success color -->
+    <color name="md_theme_dark_success">#4CAF50</color>
+    <color name="md_theme_dark_onSuccess">#000000</color>
+    <!-- Text colors -->
+    <color name="md_theme_dark_onSurface">#FFFFFF</color>
+    <color name="md_theme_dark_onBackground">#FFFFFF</color>
 </resources>

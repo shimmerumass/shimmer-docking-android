@@ -1,8 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="md_theme_light_primary">#6750A4</color>
+    <!-- Primary brand color -->
+    <color name="md_theme_light_primary">#3366CC</color>
     <color name="md_theme_light_onPrimary">#FFFFFF</color>
-    <color name="md_theme_light_secondary">#625B71</color>
-    <color name="md_theme_light_surface">#FFFBFE</color>
-    <color name="md_theme_light_background">#FFFBFE</color>
+    <!-- Secondary accent color -->
+    <color name="md_theme_light_secondary">#FF9800</color>
+    <color name="md_theme_light_onSecondary">#FFFFFF</color>
+    <!-- Surface and background -->
+    <color name="md_theme_light_surface">#F5F5F5</color>
+    <color name="md_theme_light_surfaceVariant">#E0E0E0</color>
+    <color name="md_theme_light_background">#FFFFFF</color>
+    <!-- Error color -->
+    <color name="md_theme_light_error">#D32F2F</color>
+    <color name="md_theme_light_onError">#FFFFFF</color>
+    <!-- Success color -->
+    <color name="md_theme_light_success">#388E3C</color>
+    <color name="md_theme_light_onSuccess">#FFFFFF</color>
+    <!-- Text colors -->
+    <color name="md_theme_light_onSurface">#212121</color>
+    <color name="md_theme_light_onBackground">#212121</color>
 </resources>
