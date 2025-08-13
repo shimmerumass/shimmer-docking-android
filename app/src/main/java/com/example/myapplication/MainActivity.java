@@ -75,6 +75,27 @@ public class MainActivity extends AppCompatActivity {
     private FirebaseAnalytics firebaseAnalytics;
     private Button transferButton;
 
+    // Receiver to reflect transfer/sync lifecycle in UI
+    private final BroadcastReceiver transferSyncReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || intent.getAction() == null) return;
+            String action = intent.getAction();
+            if ("com.example.myapplication.ACTION_TRANSFER_START".equals(action)) {
+                showProgress("Transferring from sensor...");
+            } else if ("com.example.myapplication.TRANSFER_DONE".equals(action)) {
+                showProgress("Transfer complete. Syncing...");
+            } else if ("com.example.myapplication.TRANSFER_FAILED".equals(action)) {
+                showProgress("Transfer failed.");
+                hideProgressDelayed(2000);
+            } else if (FileSyncService.ACTION_SYNC_START.equals(action)) {
+                showProgress("Syncing to cloud...");
+            } else if (FileSyncService.ACTION_SYNC_DONE.equals(action)) {
+                hideProgress();
+            }
+        }
+    };
+
     // Receivers for Bluetooth scanning and transfer progress
     private final BroadcastReceiver timerReceiver = new BroadcastReceiver() {
         @Override
@@ -242,6 +263,12 @@ public class MainActivity extends AppCompatActivity {
         progressText = findViewById(R.id.progressText);
         transferProgressBar = findViewById(R.id.transferProgressBar);
 
+        progressSection = findViewById(R.id.progressSection);
+        filesToSyncSection = findViewById(R.id.filesToSyncSection);
+
+        progressSection.setVisibility(View.GONE);
+        filesToSyncSection.setVisibility(View.GONE);
+
         transferButton = findViewById(R.id.transferButton);
         transferButton.setOnClickListener(v -> {
             if (selectedMac == null) {
@@ -266,12 +293,6 @@ public class MainActivity extends AppCompatActivity {
             syncFilesWithCloud();
             runOnUiThread(() -> filesToSyncSection.setVisibility(View.VISIBLE));
         });
-
-        progressSection = findViewById(R.id.progressSection);
-        filesToSyncSection = findViewById(R.id.filesToSyncSection);
-
-        progressSection.setVisibility(View.GONE);
-        filesToSyncSection.setVisibility(View.GONE);
 
         // Register receivers
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -984,5 +1005,22 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         // Restore last known UI state (status text, device list, selection)
         restoreUIState();
+    }
+
+    private void showProgress(String msg) {
+        if (progressSection != null) progressSection.setVisibility(View.VISIBLE);
+        if (progressText != null) progressText.setText(msg);
+        if (transferProgressBar != null) {
+            transferProgressBar.setIndeterminate(true);
+            transferProgressBar.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void hideProgress() {
+        if (progressSection != null) progressSection.setVisibility(View.GONE);
+    }
+
+    private void hideProgressDelayed(long ms) {
+        if (progressSection != null) progressSection.postDelayed(this::hideProgress, ms);
     }
 }

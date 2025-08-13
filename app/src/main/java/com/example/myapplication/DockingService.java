@@ -52,9 +52,18 @@ public class DockingService extends Service implements DockingManager.DockingCal
     private final BroadcastReceiver transferDoneReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            updateNotification("File transfer completed.");
+            // Start cloud sync after transfer completes
+            updateNotification("File transfer completed. Syncing to cloud...");
             cancelRetry();
-            stopSelf();
+            try {
+                Intent syncIntent = new Intent(DockingService.this, FileSyncService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(syncIntent);
+                } else {
+                    startService(syncIntent);
+                }
+            } catch (Exception ignored) {}
+            // Do not stop immediately; let onDestroy after sync restart scanning
         }
     };
 
@@ -63,9 +72,10 @@ public class DockingService extends Service implements DockingManager.DockingCal
         public void onReceive(Context context, Intent intent) {
             String reason = intent.getStringExtra("reason");
             Log.w("DockingService", "Transfer failed. Reason=" + reason);
-            // Avoid time-specific/network-like wording
-            updateNotification("Transfer failed" + (reason != null ? " (" + reason + ")" : "") + ". Will retry automatically.");
-            scheduleRetry();
+            updateNotification("Transfer failed" + (reason != null ? " (" + reason + ")" : "") + ". Entering silent state...");
+            sendDockingStatus("Transfer failed. Entering silent state...");
+            // Do not schedule a retry here; let DockingManager manage silent and restart
+            if (dockingManager != null) dockingManager.forceSilentState();
         }
     };
 
@@ -81,11 +91,11 @@ public class DockingService extends Service implements DockingManager.DockingCal
         public void onReceive(Context context, Intent intent) {
             int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
             if (state == BluetoothAdapter.STATE_TURNING_OFF || state == BluetoothAdapter.STATE_OFF) {
-                Log.w("DockingService", "Bluetooth turned off. Forcing silent state and scheduling retry.");
-                updateNotification("Bluetooth off. Entering silent state (15 min)...");
-                sendDockingStatus("Bluetooth off. Entering silent state (15 min)...");
+                Log.w("DockingService", "Bluetooth turned off. Forcing silent state.");
+                updateNotification("Bluetooth off. Entering silent state...");
+                sendDockingStatus("Bluetooth off. Entering silent state...");
                 if (dockingManager != null) dockingManager.forceSilentState();
-                scheduleRetry();
+                // Removed scheduleRetry(); let DockingManager resume after its silent timer
             }
         }
     };
@@ -108,7 +118,7 @@ public class DockingService extends Service implements DockingManager.DockingCal
 
         handler.post(() -> dockingManager.startNightDockingFlow());
 
-        // Receivers
+        // Receivers: removed connectivityReceiver; docking is Bluetooth-only
         registerReceiver(transferDoneReceiver, new IntentFilter(ACTION_TRANSFER_DONE), Context.RECEIVER_NOT_EXPORTED);
         registerReceiver(transferFailedReceiver, new IntentFilter(ACTION_TRANSFER_FAILED), Context.RECEIVER_NOT_EXPORTED);
         registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), Context.RECEIVER_NOT_EXPORTED);
@@ -124,10 +134,10 @@ public class DockingService extends Service implements DockingManager.DockingCal
         super.onDestroy();
         handler.removeCallbacksAndMessages(null);
         cancelRetry();
-
         try { unregisterReceiver(transferDoneReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(transferFailedReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(btStateReceiver); } catch (Exception ignored) {}
+        // connectivityReceiver registration removed; no unregister
 
         // Restart ScanningService
         Intent scanIntent = new Intent(this, ScanningService.class);
@@ -172,7 +182,7 @@ public class DockingService extends Service implements DockingManager.DockingCal
     public void onUndocked() {
         updateNotification("Shimmer undocked. Entering silent state...");
         sendDockingStatus("Shimmer undocked. Entering silent state...");
-        scheduleRetry();
+        // Removed scheduleRetry(); DockingManager handles silent window and resume
     }
 
     @Override
@@ -186,6 +196,12 @@ public class DockingService extends Service implements DockingManager.DockingCal
         cancelRetry();
         updateNotification("File transfer started.");
         sendDockingStatus("File transfer started.");
+        // Notify UI that transfer started
+        try {
+            Intent i = new Intent("com.example.myapplication.ACTION_TRANSFER_START");
+            i.setPackage(getPackageName());
+            sendBroadcast(i);
+        } catch (Exception ignored) {}
     }
 
     private void updateNotification(String text) {

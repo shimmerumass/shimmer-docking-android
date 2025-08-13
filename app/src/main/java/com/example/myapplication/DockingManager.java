@@ -252,16 +252,12 @@ public class DockingManager {
         isMonitoring = false;
         // Reflect in UI and Notification
         sendDockingStatus("Entering silent state (15 min)...");
-        if (adapter.isEnabled()) {
-            if (ActivityCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                Log.w(TAG, "Missing BLUETOOTH_CONNECT permission");
-                return;
-            }
-            adapter.disable();
-        }
+        // Do NOT toggle Bluetooth here; user may turn it back on. We only pause.
+        // Schedule resume after the silent window
         handler.postDelayed(() -> {
             // Release single-flight guard only after silent ends
             protocolActive.set(false);
+            silentActive = false;
             startInitializationScan();
         }, silentStateDurationMs);
     }

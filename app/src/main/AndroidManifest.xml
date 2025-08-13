@@ -59,6 +59,12 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             tools:ignore="ForegroundServicePermission" />
+
+    <service
+            android:name=".FileSyncService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            tools:ignore="ForegroundServicePermission" />
     </application>
 </manifest>
 
