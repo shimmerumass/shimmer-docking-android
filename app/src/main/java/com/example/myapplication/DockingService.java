@@ -52,18 +52,10 @@ public class DockingService extends Service implements DockingManager.DockingCal
     private final BroadcastReceiver transferDoneReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            // Start cloud sync after transfer completes
-            updateNotification("File transfer completed. Syncing to cloud...");
+            // On transfer success, just finish docking and resume scanning
+            updateNotification("File transfer completed.");
             cancelRetry();
-            try {
-                Intent syncIntent = new Intent(DockingService.this, FileSyncService.class);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(syncIntent);
-                } else {
-                    startService(syncIntent);
-                }
-            } catch (Exception ignored) {}
-            // Do not stop immediately; let onDestroy after sync restart scanning
+            stopSelf();
         }
     };
 
