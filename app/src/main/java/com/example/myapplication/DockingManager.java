@@ -34,7 +34,7 @@ public class DockingManager {
     public long scanPeriodMs = 20 * 1000; // 20 sec
     public long scanDurationMs = 10 * 1000; // 10 sec
     public long undockedTimeoutMs = 60 * 1000; // 1 min
-    public long silentStateDurationMs = 15 * 60 * 1000; // 15 min
+    public long silentStateDurationMs = 1 * 60 * 1000; // 15 min
 
     // Night mode window (settable for testing)
     public int nightStartHour = 20; // 8 PM
@@ -47,6 +47,15 @@ public class DockingManager {
     private boolean shimmerFound = false;
     private String shimmerMac = null;
 
+    // Track device receiver registration to avoid IllegalArgumentException on unregister
+    private boolean deviceReceiverRegistered = false;
+
+    // Prevent duplicate silent-state transitions/logs
+    private boolean silentActive = false;
+
+    // Notification support for Docking status
+    private static final String DOCKING_CHANNEL_ID = "ShimmerDockingChannel"; // unused but kept for clarity
+
     public DockingManager(Context ctx, DockingCallback cb) {
         this.context = ctx;
         this.callback = cb;
@@ -54,32 +63,68 @@ public class DockingManager {
         Log.d(TAG, "DockingManager constructed");
     }
 
-    public void startNightDockingFlow() {
-        Log.d(TAG, "startNightDockingFlow() called");
-        if (!isNightWindow()) {
-            Log.d(TAG, "Not in night window, docking protocol will NOT start.");
-            return;
+    // Ensure the shared notification channel exists for Docking updates
+    private void ensureDockingChannel() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            android.app.NotificationManager nm = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null && nm.getNotificationChannel("ShimmerScanChannel") == null) {
+                android.app.NotificationChannel channel = new android.app.NotificationChannel(
+                        "ShimmerScanChannel",
+                        "Shimmer Scan Channel",
+                        android.app.NotificationManager.IMPORTANCE_LOW
+                );
+                channel.setDescription("Channel for Shimmer Scan notifications");
+                nm.createNotificationChannel(channel);
+            }
         }
-        Log.d(TAG, "Starting night docking protocol...");
-        startInitializationScan();
     }
 
-    private boolean isNightWindow() {
-        java.util.Calendar cal = java.util.Calendar.getInstance();
-        int hour = cal.get(java.util.Calendar.HOUR_OF_DAY);
-        Log.d(TAG, "isNightWindow: now=" + hour + ", start=" + nightStartHour + ", end=" + nightEndHour);
-        if (nightStartHour < nightEndHour) {
-            return hour >= nightStartHour && hour < nightEndHour;
-        } else {
-            return hour >= nightStartHour || hour < nightEndHour;
-        }
+    private void notifyDocking(String msg) {
+        ensureDockingChannel();
+        androidx.core.app.NotificationCompat.Builder builder =
+                new androidx.core.app.NotificationCompat.Builder(context, "ShimmerScanChannel")
+                        .setContentTitle("Shimmer Docking")
+                        .setContentText(msg)
+                        .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                        .setOnlyAlertOnce(true);
+        androidx.core.app.NotificationManagerCompat.from(context).notify(1002, builder.build());
+    }
+
+    // Helper to notify UI about docking status directly
+    private void sendDockingStatus(String status) {
+        // Persist latest docking status for UI restoration
+        try {
+            android.content.SharedPreferences prefs = context.getSharedPreferences("app_state", Context.MODE_PRIVATE);
+            prefs.edit().putString("status_text", status == null ? "" : status).apply();
+        } catch (Exception ignored) {}
+
+        Intent i = new Intent("com.example.myapplication.DOCKING_STATUS");
+        i.setPackage(context.getPackageName());
+        i.putExtra("status", status);
+        context.sendBroadcast(i);
+        notifyDocking(status);
+    }
+
+    // Centralized handler: when Bluetooth is OFF anywhere in Docking protocol
+    private void handleBluetoothOffAndSilent(String where) {
+        Log.d(TAG, "Bluetooth OFF (" + where + "). Entering silent state.");
+        sendDockingStatus("Bluetooth is off. Entering silent state (15 min). Please turn on Bluetooth.");
+        enterSilentState();
     }
 
     // State 1: Initialization Scan
     private void startInitializationScan() {
+        // Reset silent-state guard when a new cycle begins
+        silentActive = false;
         shimmerFound = false;
         shimmerMac = null;
         Log.d(TAG, "Initialization scan started.");
+
+        // If Bluetooth is OFF, do not mark undocked; go to silent state and inform UI
+        if (adapter == null || !adapter.isEnabled()) {
+            handleBluetoothOffAndSilent("init scan start");
+            return;
+        }
 
         if (ActivityCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "Missing BLUETOOTH_SCAN permission");
@@ -88,23 +133,32 @@ public class DockingManager {
         try {
             if (adapter.isDiscovering()) adapter.cancelDiscovery();
             adapter.startDiscovery();
-            context.registerReceiver(deviceFoundReceiver, new android.content.IntentFilter(BluetoothDevice.ACTION_FOUND));
+            // Ensure we only register once
+            registerDeviceReceiverIfNeeded();
         } catch (SecurityException e) {
             Log.e(TAG, "Bluetooth scan failed due to missing permission", e);
             return;
         }
 
         handler.postDelayed(() -> {
-            try {
-                adapter.cancelDiscovery();
-                context.unregisterReceiver(deviceFoundReceiver);
-            } catch (SecurityException e) {
-                Log.e(TAG, "Bluetooth cancel/unregister failed", e);
+            try { adapter.cancelDiscovery(); } catch (Exception ignored) {}
+            safeUnregisterDeviceReceiver();
+
+            // If Bluetooth turned OFF during scan window, do not mark undocked
+            if (adapter == null || !adapter.isEnabled()) {
+                handleBluetoothOffAndSilent("init scan end");
+                return;
             }
+
             if (shimmerFound && shimmerMac != null) {
                 onShimmerFound(shimmerMac);
             } else {
-                callback.onUndocked();
+                // Only mark undocked if Bluetooth is ON
+                if (adapter.isEnabled()) {
+                    callback.onUndocked();
+                } else {
+                    sendDockingStatus("Bluetooth is off. Entering silent state (15 min)...");
+                }
                 enterSilentState();
             }
         }, scanDurationMs);
@@ -135,6 +189,13 @@ public class DockingManager {
             startDirectQueryAndConnection();
             return;
         }
+
+        // If Bluetooth is OFF, do not mark undocked; go to silent state and inform UI
+        if (adapter == null || !adapter.isEnabled()) {
+            handleBluetoothOffAndSilent("periodic scan start");
+            return;
+        }
+
         if (ActivityCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "Missing BLUETOOTH_SCAN permission");
             return;
@@ -143,21 +204,32 @@ public class DockingManager {
             if (adapter.isDiscovering()) adapter.cancelDiscovery();
             shimmerFound = false;
             adapter.startDiscovery();
-            context.registerReceiver(deviceFoundReceiver, new android.content.IntentFilter(BluetoothDevice.ACTION_FOUND));
+            // Ensure single registration
+            registerDeviceReceiverIfNeeded();
         } catch (SecurityException e) {
             Log.e(TAG, "Bluetooth scan failed due to missing permission", e);
             return;
         }
 
         handler.postDelayed(() -> {
-            try {
-                adapter.cancelDiscovery();
-                context.unregisterReceiver(deviceFoundReceiver);
-            } catch (Exception ignored) {}
-            // Check undocked condition
+            try { adapter.cancelDiscovery(); } catch (Exception ignored) {}
+            safeUnregisterDeviceReceiver();
+
+            // If Bluetooth turned OFF during scan window, do not mark undocked
+            if (adapter == null || !adapter.isEnabled()) {
+                handleBluetoothOffAndSilent("periodic scan end");
+                return;
+            }
+
+            // Check undocked condition when BT is ON
             if (!shimmerFound && (System.currentTimeMillis() - lastSeenTime) > undockedTimeoutMs) {
-                isMonitoring = false;
-                callback.onUndocked();
+                // Only mark undocked if Bluetooth is still ON
+                if (adapter.isEnabled()) {
+                    isMonitoring = false;
+                    callback.onUndocked();
+                } else {
+                    sendDockingStatus("Bluetooth is off. Entering silent state (15 min)...");
+                }
                 enterSilentState();
                 return;
             }
@@ -168,7 +240,15 @@ public class DockingManager {
 
     // State 4: Silent State
     private void enterSilentState() {
+        if (silentActive) return; // idempotent guard
+        silentActive = true;
         Log.d(TAG, "Entering silent state...");
+        // Cancel any pending scan callbacks to avoid re-entry
+        handler.removeCallbacksAndMessages(null);
+        // Make sure monitoring loop halts
+        isMonitoring = false;
+        // Reflect in UI and Notification
+        sendDockingStatus("Entering silent state (15 min)...");
         if (adapter.isEnabled()) {
             if (ActivityCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 Log.w(TAG, "Missing BLUETOOTH_CONNECT permission");
@@ -182,6 +262,11 @@ public class DockingManager {
     // State 5: Direct Query and Connection
     private void startDirectQueryAndConnection() {
         Log.d(TAG, "Direct query and connection...");
+        // If Bluetooth is OFF, do not proceed; go silent and inform UI
+        if (adapter == null || !adapter.isEnabled()) {
+            handleBluetoothOffAndSilent("direct query start");
+            return;
+        }
         new Thread(() -> {
             int dockStatus = queryDockStateFromShimmer(shimmerMac);
             handler.post(() -> handleDockStateResponse(dockStatus));
@@ -190,6 +275,10 @@ public class DockingManager {
 
     // State 6: Response Handling
     private void handleDockStateResponse(int status) {
+        if (status < 0) { // -1 => Bluetooth off or not available
+            handleBluetoothOffAndSilent("direct query response");
+            return;
+        }
         if (status == 0) {
             Log.d(TAG, "Shimmer is undocked.");
             callback.onUndocked();
@@ -212,6 +301,11 @@ public class DockingManager {
     }
 
     private int queryDockStateFromShimmer(String macAddress) {
+        // If Bluetooth is OFF, signal with -1 instead of treating as undocked
+        if (adapter == null || !adapter.isEnabled()) {
+            Log.w(TAG, "Bluetooth OFF during dock state query");
+            return -1;
+        }
         BluetoothSocket socket = null;
         try {
             // Permission check
@@ -233,7 +327,9 @@ public class DockingManager {
                     connected = true;
                 } catch (IOException e) {
                     Log.e(TAG, "Socket connect attempt " + attempts + " failed.", e);
-                    if (attempts < 3) Thread.sleep(1000);
+                    if (attempts < 3) try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+                    // If BT toggled OFF during retries, bail with -1
+                    if (adapter == null || !adapter.isEnabled()) return -1;
                 }
             }
             if (!connected) {
@@ -250,7 +346,7 @@ public class DockingManager {
 
             // Increase wait time before reading response
             try {
-                Thread.sleep(500); // Wait 500ms (or try 1000ms if needed)
+                Thread.sleep(500);
             } catch (InterruptedException ie) {
                 Log.e(TAG, "Sleep interrupted before reading response", ie);
             }
@@ -307,4 +403,71 @@ public class DockingManager {
             }
         }
     };
+
+    // Safely unregister the device receiver if it was registered
+    private void safeUnregisterDeviceReceiver() {
+        if (!deviceReceiverRegistered) return;
+        try {
+            context.unregisterReceiver(deviceFoundReceiver);
+        } catch (IllegalArgumentException | SecurityException ignored) {
+            // ignore if not registered or missing permission
+        } finally {
+            deviceReceiverRegistered = false;
+        }
+    }
+
+    // Register the receiver only once to avoid IllegalArgumentException on double-register
+    private void registerDeviceReceiverIfNeeded() {
+        if (deviceReceiverRegistered) return;
+        try {
+            context.registerReceiver(
+                    deviceFoundReceiver,
+                    new android.content.IntentFilter(BluetoothDevice.ACTION_FOUND)
+            );
+            deviceReceiverRegistered = true;
+        } catch (SecurityException ignored) {
+            deviceReceiverRegistered = false;
+        }
+    }
+
+    // Force protocol into Silent State immediately (used on Bluetooth OFF).
+    public void forceSilentState() {
+        try {
+            if (adapter != null && adapter.isDiscovering()) {
+                adapter.cancelDiscovery();
+            }
+        } catch (Exception ignored) {}
+        // Safe unregister if registered
+        safeUnregisterDeviceReceiver();
+
+        isMonitoring = false;
+        // Do NOT call callback.onUndocked() here to avoid misleading UI when BT is off.
+        enterSilentState();
+    }
+
+    // Night docking entry point (called by DockingService)
+    public void startNightDockingFlow() {
+        Log.d(TAG, "startNightDockingFlow() called");
+        if (!isNightWindow()) {
+            Log.d(TAG, "Not in night window, docking protocol will NOT start.");
+            return;
+        }
+        Log.d(TAG, "Starting night docking protocol...");
+        // Ensure ScanningService is not running to avoid conflicting timers/UI
+        try { context.stopService(new Intent(context, ScanningService.class)); } catch (Exception ignored) {}
+        sendDockingStatus("Docking protocol started.");
+        startInitializationScan();
+    }
+
+    // Night window check
+    private boolean isNightWindow() {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        int hour = cal.get(java.util.Calendar.HOUR_OF_DAY);
+        Log.d(TAG, "isNightWindow: now=" + hour + ", start=" + nightStartHour + ", end=" + nightEndHour);
+        if (nightStartHour < nightEndHour) {
+            return hour >= nightStartHour && hour < nightEndHour;
+        } else {
+            return hour >= nightStartHour || hour < nightEndHour;
+        }
+    }
 }

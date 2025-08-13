@@ -97,11 +97,13 @@ public class MainActivity extends AppCompatActivity {
     private final BroadcastReceiver statusReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            // Ignore scanning status updates while DockingService is running to prevent 15s vs 15m conflicts
+            if (isDockingServiceRunning()) return;
             String status = intent.getStringExtra("status");
             if (status != null) {
                 runOnUiThread(() -> {
                     statusText.setText(status);
-                    persistStatus(status); // supply latest remainingTime
+                    persistStatus(status);
                 });
             }
         }
@@ -192,6 +194,24 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    private final BroadcastReceiver dockingStatusReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String status = intent.getStringExtra("status");
+            if (status == null) return;
+            try {
+                TextView statusView = findViewById(R.id.statusText);
+                if (statusView != null) {
+                    statusView.setText(status);
+                } else {
+                    Toast.makeText(MainActivity.this, status, Toast.LENGTH_SHORT).show();
+                }
+            } catch (Exception ignored) {
+                Toast.makeText(MainActivity.this, status, Toast.LENGTH_SHORT).show();
+            }
+        }
+    };
+
     private void updateThemeToggleIcon(MaterialButton themeToggleButton) {
         int currentNightMode = getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
         if (currentNightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES) {
@@ -265,12 +285,17 @@ public class MainActivity extends AppCompatActivity {
                     Context.RECEIVER_NOT_EXPORTED);
             registerReceiver(transferErrorReceiver, new IntentFilter("com.example.myapplication.TRANSFER_ERROR"),
                     Context.RECEIVER_NOT_EXPORTED);
+            // Register Docking status updates for UI
+            registerReceiver(dockingStatusReceiver, new IntentFilter("com.example.myapplication.DOCKING_STATUS"),
+                    Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(timerReceiver, new IntentFilter(ScanningService.ACTION_TIMER_UPDATE));
             registerReceiver(scanResultReceiver, new IntentFilter(ScanningService.ACTION_SCAN_RESULTS));
             registerReceiver(statusReceiver, new IntentFilter(ScanningService.ACTION_STATUS_UPDATE));
             registerReceiver(progressReceiver, new IntentFilter("com.example.myapplication.TRANSFER_PROGRESS"));
             registerReceiver(transferErrorReceiver, new IntentFilter("com.example.myapplication.TRANSFER_ERROR"));
+            // Register Docking status updates for UI
+            registerReceiver(dockingStatusReceiver, new IntentFilter("com.example.myapplication.DOCKING_STATUS"));
         }
 
         if (!hasPermissions()) {
@@ -373,203 +398,181 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.changeDockingHoursButton).setOnClickListener(v -> showDockingHoursPopup());
     }
 
+    // Restore on app start/reopen
     private void restoreUIState() {
         SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
 
-        // Restore scanned devices
-        String devicesJson = prefs.getString("scanned_devices", "[]");
+        // Restore status text
+        String lastStatus = prefs.getString("status_text", "");
+        if (lastStatus != null && !lastStatus.isEmpty()) {
+            statusText.setText(lastStatus);
+        }
+
+        // Restore scanned devices (prefer JSON, fallback to newline format)
         ArrayList<String> devices = new ArrayList<>();
-        try {
-            JSONArray arr = new JSONArray(devicesJson);
-            for (int i = 0; i < arr.length(); i++) {
-                devices.add(arr.getString(i));
+        String devicesJson = prefs.getString("scanned_devices_json", null);
+        if (devicesJson != null && !devicesJson.isEmpty()) {
+            try {
+                org.json.JSONArray arr = new org.json.JSONArray(devicesJson);
+                for (int i = 0; i < arr.length(); i++) devices.add(arr.getString(i));
+            } catch (Exception ignored) {}
+        }
+        if (devices.isEmpty()) {
+            String saved = prefs.getString("scanned_devices", "");
+            if (saved != null && !saved.isEmpty()) {
+                String[] lines = saved.split("\n");
+                for (String line : lines) {
+                    if (line != null && !line.trim().isEmpty()) devices.add(line.trim());
+                }
             }
-        } catch (JSONException ignored) {}
+        }
         updateDeviceList(devices);
 
-        // Restore selected device
-        selectedMac = prefs.getString("selected_mac", null);
+        // Restore selected MAC
+        String mac = prefs.getString("selected_mac", "");
+        if (mac != null && !mac.isEmpty()) {
+            selectedMac = mac;
+        }
+    }
 
-        // Restore timer/status
-        long remainingTime = prefs.getLong("remaining_time", 0);
-        String scanningStatus = prefs.getString("scanning_status", "Status");
-        timerText.setText("Remaining: " + (remainingTime / 1000) + " sec");
-        statusText.setText(scanningStatus);
-
-        // Restore transfer progress
-        if (isTransferServiceRunning()) {
-            int progress = prefs.getInt("transfer_progress", 0);
-            int total = prefs.getInt("transfer_total", 1);
-            String filename = prefs.getString("transfer_filename", "");
-            if (progress >= 0 && total > 0) {
-                int percent = (int) ((progress * 100.0f) / total);
-                String display = "Transfer Progress: " + progress + "/" + total + " (" + percent + "%)";
-                if (filename != null && !filename.isEmpty()) {
-                    display += "\nLast file: " + filename;
-                }
-                progressSection.setVisibility(View.VISIBLE);
-                transferProgressBar.setMax(total);
-                transferProgressBar.setProgress(progress);
-                progressText.setText(display);
-                
-            } else {
-                progressSection.setVisibility(View.GONE);
+    // Ensure we persist selection when user taps a device
+    private void setupDeviceList() {
+        // ...existing code that initializes deviceListView...
+        deviceListView.setOnItemClickListener((parent, view, position, id) -> {
+            String deviceInfo = (String) parent.getItemAtPosition(position);
+            String[] parts = deviceInfo.split(" - ");
+            if (parts.length == 2) {
+                selectedMac = parts[1];
+                persistSelectedMacCompat(selectedMac);
             }
-        } else {
-            // Hide/reset progress bar if transfer not running
-            progressSection.setVisibility(View.GONE);
+        });
+    }
+
+    // Call this whenever you update the device list
+    private void persistDeviceListCompat(ArrayList<String> devices) {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        // JSON format
+        prefs.edit().putString("scanned_devices_json", new JSONArray(devices).toString()).apply();
+        // Newline format for backward compatibility
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < devices.size(); i++) {
+            if (i > 0) sb.append('\n');
+            sb.append(devices.get(i));
         }
+        prefs.edit().putString("scanned_devices", sb.toString()).apply();
+    }
 
-        if (!isTransferServiceRunning()) {
-            // Defensive: clear transfer state if service is not running
-            prefs.edit()
-                    .remove("transfer_progress")
-                    .remove("transfer_total")
-                    .remove("transfer_filename")
-                    .remove("progress_visibility")
-                    .apply();
-            progressSection.setVisibility(View.GONE);
-        }
-        if (!isScanningServiceRunning()) {
-            // Defensive: clear scan state if service is not running
-            prefs.edit()
-                    .remove("scanning_status")
-                    .remove("remaining_time")
-                    .remove("scanned_devices")
-                    .apply();
-            // Hide or reset scan-related UI
-        }
+    // Call this whenever you select a device
+    private void persistSelectedMacCompat(String mac) {
+        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        prefs.edit().putString("selected_mac", mac).apply();
+    }
 
-        // Restore file sync state
-        String filesJson = prefs.getString("sync_files", "[]");
-        String statusJson = prefs.getString("sync_status", "[]");
-        String uploadingJson = prefs.getString("sync_uploading", "[]");
-
-        try {
-            JSONArray filesArray = new JSONArray(filesJson);
-            JSONArray statusArray = new JSONArray(statusJson);
-            JSONArray uploadingArray = new JSONArray(uploadingJson);
-
-            filesToUpload.clear();
-            uploadStatus.clear();
-            uploading.clear();
-
-            for (int i = 0; i < filesArray.length(); i++) {
-                String filePath = filesArray.getString(i);
-                boolean isUploaded = statusArray.optBoolean(i, false);
-                boolean isUploading = uploadingArray.optBoolean(i, false);
-
-                File file = new File(filePath);
-                if (file.exists()) {
-                    filesToUpload.add(file);
-                    uploadStatus.add(isUploaded);
-                    uploading.add(isUploading);
+    private void updateDeviceList(ArrayList<String> devices) {
+        runOnUiThread(() -> {
+            // If list is empty, clear selection and UI immediately
+            if (devices == null || devices.isEmpty()) {
+                selectedMac = null;
+                ArrayAdapter<String> emptyAdapter = new ArrayAdapter<>(this,
+                        android.R.layout.simple_list_item_1, new ArrayList<>());
+                deviceListView.setAdapter(emptyAdapter);
+                deviceListView.clearChoices();
+                emptyAdapter.notifyDataSetChanged();
+                if (!isDockingServiceRunning()) {
+                    statusText.setText("No devices found");
                 }
+                persistDeviceListCompat(new ArrayList<>());
+                return;
             }
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
 
-        if (!filesToUpload.isEmpty()) {
-            fileListAdapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1) {
-                @Override
-                public int getCount() {
-                    return filesToUpload != null ? filesToUpload.size() : 0;
-                }
+            // Do not overwrite Docking status text when DockingService is running
+            if (!isDockingServiceRunning()) {
+                statusText.setText("Devices found: " + devices.size());
+            }
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                    android.R.layout.simple_list_item_1, devices);
+            deviceListView.setAdapter(adapter);
 
-                @Override
-                public String getItem(int position) {
-                    File file = filesToUpload.get(position);
-                    if (uploadStatus.get(position)) {
-                        return "✅ " + file.getName();
-                    } else if (uploading.get(position)) {
-                        return "⏳ " + file.getName();
-                    } else {
-                        return "❌ " + file.getName(); // Show failed status
+            if (selectedMac != null) {
+                for (int i = 0; i < devices.size(); i++) {
+                    String deviceInfo = devices.get(i);
+                    String[] parts = deviceInfo.split(" - ");
+                    if (parts.length == 2 && selectedMac.equals(parts[1])) {
+                        deviceListView.setItemChecked(i, true);
+                        if (!isDockingServiceRunning()) {
+                            statusText.setText("Selected device: " + parts[0]);
+                        }
+                        break;
                     }
                 }
-            };
-            fileListView.setAdapter(fileListAdapter);
-            filesToSyncSection.setVisibility(View.VISIBLE);
-        } else {
-            filesToSyncSection.setVisibility(View.GONE);
-        }
-
-        if (!isTransferServiceRunning()) {
-            // Defensive: clear transfer state if service is not running
-            prefs.edit()
-                    .remove("transfer_progress")
-                    .remove("transfer_total")
-                    .remove("transfer_filename")
-                    .remove("progress_visibility")
-                    .apply();
-            progressSection.setVisibility(View.GONE);
-        }
-        if (!isScanningServiceRunning()) {
-            // Defensive: clear scan state if service is not running
-            prefs.edit()
-                    .remove("scanning_status")
-                    .remove("remaining_time")
-                    .remove("scanned_devices")
-                    .apply();
-            // Hide or reset scan-related UI
-        }
-
-        // --- CLEAR SYNC STATE IF SYNC SERVICE IS NOT RUNNING ---
-        if (!isSyncServiceRunning()) {
-            prefs.edit()
-                .remove("sync_files")
-                .remove("sync_status")
-                .remove("sync_uploading")
-                .remove("sync_display_list")
-                .apply();
-            filesToSyncSection.setVisibility(View.GONE);
-            fileListAdapter = null;
-            fileListView.setAdapter(null);
-        }
-
-        // --- Restore sync display list (only if not cleared above) ---
-        String syncDisplayJson = prefs.getString("sync_display_list", "[]");
-        try {
-            JSONArray arr = new JSONArray(syncDisplayJson);
-            ArrayList<String> displayList = new ArrayList<>();
-            for (int i = 0; i < arr.length(); i++) {
-                displayList.add(arr.getString(i));
             }
-            if (!displayList.isEmpty()) {
-                fileListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, displayList);
-                fileListView.setAdapter(fileListAdapter);
-                filesToSyncSection.setVisibility(View.VISIBLE);
-            } else {
-                filesToSyncSection.setVisibility(View.GONE);
-            }
-        } catch (JSONException ignored) {}
+
+            deviceListView.setOnItemClickListener((parent, view, position, id) -> {
+                String deviceInfo = devices.get(position);
+                String[] parts = deviceInfo.split(" - ");
+                if (parts.length == 2) {
+                    selectedMac = parts[1];
+                    Toast.makeText(this, "Selected: " + selectedMac, Toast.LENGTH_SHORT).show();
+                    if (!isDockingServiceRunning()) {
+                        statusText.setText("Selected device: " + parts[0]);
+                    }
+                }
+            });
+
+            persistDeviceListCompat(devices);
+        });
     }
 
-    @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
-        if (deviceListView != null && deviceListView.getAdapter() != null) {
-            ArrayList<String> devices = new ArrayList<>();
-            for (int i = 0; i < deviceListView.getAdapter().getCount(); i++) {
-                devices.add((String) deviceListView.getAdapter().getItem(i));
+    // Persist incoming UI state from broadcasts
+    private final BroadcastReceiver appReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (ScanningService.ACTION_STATUS_UPDATE.equals(action)) {
+                String status = intent.getStringExtra("status");
+                if (status != null) {
+                    statusText.setText(status);
+                    persistStatus(status); // replaced persistStatusText
+                }
+            } else if ("com.example.myapplication.DOCKING_STATUS".equals(action)) {
+                String status = intent.getStringExtra("status");
+                if (status != null) {
+                    statusText.setText(status);
+                    persistStatus(status); // replaced persistStatusText
+                }
+            } else if (ScanningService.ACTION_SCAN_RESULTS.equals(action)) {
+                ArrayList<String> devices = intent.getStringArrayListExtra("devices");
+                if (devices == null) devices = new ArrayList<>();
+                updateDeviceList(devices);
+                persistDeviceListCompat(devices);
+            } else if (ScanningService.ACTION_TIMER_UPDATE.equals(action)) {
+                if (intent.hasExtra("remaining_time")) {
+                    long remaining = intent.getLongExtra("remaining_time", 0);
+                    SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+                    prefs.edit().putLong("remaining_time", remaining).apply();
+                }
+            } else if (ScanningService.ACTION_SLEEP_TIMER_UPDATE.equals(action)) {
+                if (intent.hasExtra("remaining_sleep")) {
+                    long remaining = intent.getLongExtra("remaining_sleep", 0);
+                    SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+                    prefs.edit().putLong("remaining_sleep", remaining).apply();
+                }
             }
-            outState.putStringArrayList("devices", devices);
         }
-        outState.putString("selectedMac", selectedMac);
-        outState.putInt("progress", transferProgressBar.getProgress());
-        outState.putInt("progress_total", transferProgressBar.getMax());
-        outState.putInt("progress_visibility", progressSection.getVisibility());
-        outState.putString("progressText", progressText.getText().toString());
-        outState.putInt("progressSectionVisibility", progressSection.getVisibility());
-        outState.putInt("progressBarVisibility", transferProgressBar.getVisibility());
-        outState.putBoolean("filesToSyncVisible", filesToSyncSection.getVisibility() == View.VISIBLE);
-    }
+    };
 
     // Call this whenever you update the device list
     private void persistDeviceList(ArrayList<String> devices) {
         SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
-        prefs.edit().putString("scanned_devices", new JSONArray(devices).toString()).apply();
+        // JSON format
+        prefs.edit().putString("scanned_devices_json", new JSONArray(devices).toString()).apply();
+        // Newline format for backward compatibility
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < devices.size(); i++) {
+            if (i > 0) sb.append('\n');
+            sb.append(devices.get(i));
+        }
+        prefs.edit().putString("scanned_devices", sb.toString()).apply();
     }
 
     // Call this whenever you update timer/status
@@ -637,39 +640,6 @@ public class MainActivity extends AppCompatActivity {
         } else {
             startService(serviceIntent);
         }
-    }
-
-    private void updateDeviceList(ArrayList<String> devices) {
-        runOnUiThread(() -> {
-            statusText.setText("Devices found: " + devices.size());
-            ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                    android.R.layout.simple_list_item_1, devices);
-            deviceListView.setAdapter(adapter);
-
-            if (selectedMac != null) {
-                for (int i = 0; i < devices.size(); i++) {
-                    String deviceInfo = devices.get(i);
-                    String[] parts = deviceInfo.split(" - ");
-                    if (parts.length == 2 && selectedMac.equals(parts[1])) {
-                        deviceListView.setItemChecked(i, true);
-                        statusText.setText("Selected device: " + parts[0]);
-                        break;
-                    }
-                }
-            }
-
-            deviceListView.setOnItemClickListener((parent, view, position, id) -> {
-                String deviceInfo = devices.get(position);
-                String[] parts = deviceInfo.split(" - ");
-                if (parts.length == 2) {
-                    selectedMac = parts[1];
-                    Toast.makeText(this, "Selected: " + selectedMac, Toast.LENGTH_SHORT).show();
-                    statusText.setText("Selected device: " + parts[0]);
-                }
-            });
-
-            persistDeviceList(devices); // <-- Add this line
-        });
     }
 
     private void syncFilesWithCloud() {
@@ -772,6 +742,7 @@ public class MainActivity extends AppCompatActivity {
             unregisterReceiver(statusReceiver);
             unregisterReceiver(progressReceiver);
             unregisterReceiver(transferErrorReceiver);
+            unregisterReceiver(dockingStatusReceiver);
         } catch (Exception e) {
             Log.w("MainActivity", "Receiver unregistration error: " + e.getMessage());
         }
@@ -1006,5 +977,12 @@ public class MainActivity extends AppCompatActivity {
         } else {
             return currentHour >= startHour || currentHour < endHour;
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Restore last known UI state (status text, device list, selection)
+        restoreUIState();
     }
 }

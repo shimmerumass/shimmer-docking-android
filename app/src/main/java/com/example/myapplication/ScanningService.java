@@ -24,6 +24,7 @@ public class ScanningService extends Service {
     public static final String ACTION_SCAN_RESULTS = "com.example.myapplication.ACTION_SCAN_RESULTS";
     public static final String ACTION_SLEEP_TIMER_UPDATE = "com.example.myapplication.ACTION_SLEEP_TIMER_UPDATE";
     public static final String ACTION_STATUS_UPDATE = "com.example.myapplication.ACTION_STATUS_UPDATE";
+    public static final String EXTRA_RESET_PROTOCOL = "com.example.myapplication.EXTRA_RESET_PROTOCOL";
 
     private BluetoothAdapter bluetoothAdapter;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -32,6 +33,7 @@ public class ScanningService extends Service {
     // Extended search flag and elapsed time tracker.
     private long extendedSearchElapsed = 0;
     private boolean isExtendedSearch = false;
+    private boolean isScanning = false;
 
     // Timer durations and sleep intervals:
     private static final long SCAN_DURATION_MS = 15 * 1000;                 // 15 sec scan
@@ -48,6 +50,12 @@ public class ScanningService extends Service {
 
     // Add a new field to prevent duplicate handling.
     private boolean scanFinishedHandled = false;
+
+    // Prevent scans while sleeping between cycles
+    private volatile boolean isSleeping = false;
+
+    // Flag to prevent unintended restarts while sleeping
+    private boolean hasEverStartedScan = false;
 
     // Timer runnable for scan countdown.
     private final Runnable timerRunnable = new Runnable() {
@@ -93,6 +101,9 @@ public class ScanningService extends Service {
                 handler.postDelayed(this, 1000);
             } else {
                 Log.d(TAG, "Sleep timer ended.");
+                isSleeping = false;
+                // Clear persisted sleep state
+                try { getSharedPreferences("app_state", MODE_PRIVATE).edit().remove("sleep_until").apply(); } catch (Exception ignored) {}
                 // After sleep, always start with an initial scan.
                 startInitialScan();
             }
@@ -113,6 +124,46 @@ public class ScanningService extends Service {
         }
     };
 
+    // Listen for Bluetooth state changes to clear stale devices when BT turns OFF
+    private final BroadcastReceiver btStateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (BluetoothAdapter.ACTION_STATE_CHANGED.equals(intent.getAction())) {
+                int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+                if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
+                    // If sleeping, cancel sleep and wait for ON to restart from the beginning
+                    if (isSleeping) {
+                        try { if (currentSleepTimer != null) handler.removeCallbacks(currentSleepTimer); } catch (Exception ignored) {}
+                        isSleeping = false;
+                        try { getSharedPreferences("app_state", MODE_PRIVATE).edit().remove("sleep_until").apply(); } catch (Exception ignored) {}
+                        updateNotification("Bluetooth turned off. Sleep cancelled.");
+                        sendStatusUpdate("Bluetooth turned off. Sleep cancelled.");
+                        // Do not schedule retries here; restart when BT turns ON
+                        return;
+                    }
+                    // Not sleeping: stop timers and clear list; do not schedule retries
+                    timerHandler.removeCallbacksAndMessages(null);
+                    handler.removeCallbacksAndMessages(null);
+                    foundDevices.clear();
+                    broadcastEmptyScanResults();
+                    updateNotification("Bluetooth is off. Waiting for it to turn on...");
+                    sendStatusUpdate("Bluetooth is off. Waiting for it to turn on...");
+                } else if (state == BluetoothAdapter.STATE_ON) {
+                    // If sleeping, do nothing; wait for sleep timer to end
+                    if (isSleeping) {
+                        updateNotification("Bluetooth enabled (sleeping). Will resume after sleep...");
+                        sendStatusUpdate("Bluetooth enabled. Sleeping...");
+                        return;
+                    }
+                    // Restart protocol from the beginning only when not sleeping
+                    updateNotification("Bluetooth enabled. Restarting scan...");
+                    sendStatusUpdate("Bluetooth enabled. Restarting scan...");
+                    startInitialScan();
+                }
+            }
+        }
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -122,11 +173,67 @@ public class ScanningService extends Service {
 
         // Register for Bluetooth discovery events.
         registerReceiver(discoveryReceiver, createBluetoothIntentFilter());
+        // Register for Bluetooth state changes.
+        registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification("Service started"));
 
-        // Begin with initial scan.
-        startInitialScan();
+        // Clear any stale device list in UI at service start
+        foundDevices.clear();
+        broadcastEmptyScanResults();
+
+        // If we were sleeping before process restart, resume sleeping and do NOT start scanning
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+            long until = prefs.getLong("sleep_until", 0L);
+            long now = System.currentTimeMillis();
+            if (until > now) {
+                long remaining = until - now;
+                isSleeping = true;
+                if (currentSleepTimer != null) handler.removeCallbacks(currentSleepTimer);
+                currentSleepTimer = new SleepTimerRunnable();
+                currentSleepTimer.setRemainingSleep(remaining);
+                handler.post(currentSleepTimer);
+                updateNotification("Sleeping for " + (remaining / 60000) + " minutes");
+                sendStatusUpdate("Sleeping: " + (remaining / 60000) + " min " + ((remaining % 60000) / 1000) + " sec left");
+                return; // do not start scans while resuming sleep
+            }
+        } catch (Exception ignored) {}
+
+        // Do not start scanning here; onStartCommand will handle it
+    }
+
+    private void saveStatusToPrefs(String status) {
+        android.content.SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        prefs.edit().putString("status_text", status == null ? "" : status).apply();
+    }
+
+    private void persistDevices(java.util.List<String> devices) {
+        android.content.SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        StringBuilder sb = new StringBuilder();
+        if (devices != null) {
+            for (int i = 0; i < devices.size(); i++) {
+                if (i > 0) sb.append('\n');
+                sb.append(devices.get(i));
+            }
+        }
+        // Newline format (existing readers)
+        prefs.edit().putString("scanned_devices", sb.toString()).apply();
+        // JSON format (backward/forward compatible restore)
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            if (devices != null) for (String d : devices) arr.put(d);
+            prefs.edit().putString("scanned_devices_json", arr.toString()).apply();
+        } catch (Throwable ignored) {}
+    }
+
+    private void broadcastEmptyScanResults() {
+        Intent updateIntent = new Intent(ACTION_SCAN_RESULTS);
+        updateIntent.putStringArrayListExtra("devices", new ArrayList<>());
+        updateIntent.setPackage(getApplicationContext().getPackageName());
+        sendBroadcast(updateIntent);
+        // Persist empty list
+        persistDevices(new ArrayList<>());
     }
 
     // Create intent filter for Bluetooth discovery events.
@@ -177,6 +284,11 @@ public class ScanningService extends Service {
 
     // Handle Bluetooth discovery events.
     private void handleBluetoothEvents(Intent intent) {
+        // Ignore discovery events during sleep
+        if (isSleeping) {
+            Log.d(TAG, "Ignoring BT discovery event during sleep: " + intent.getAction());
+            return;
+        }
         String action = intent.getAction();
         if (BluetoothAdapter.ACTION_DISCOVERY_STARTED.equals(action)) {
             Log.d(TAG, "Discovery started");
@@ -184,6 +296,16 @@ public class ScanningService extends Service {
             sendStatusUpdate("Scanning for Shimmer devices...");
         } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
             Log.d(TAG, "Discovery finished");
+            // If Bluetooth got turned OFF mid-scan, do not treat as a normal scan finish.
+            if (bluetoothAdapter != null && !bluetoothAdapter.isEnabled()) {
+                Log.d(TAG, "Bluetooth turned OFF during scan. Scheduling 15s retry via enable flow.");
+                // Stop the scan timer updates immediately
+                timerHandler.removeCallbacksAndMessages(null);
+                updateNotification("Bluetooth turned off during scan. Please turn it on. Retrying in 15 sec...");
+                sendStatusUpdate("Bluetooth turned off during scan. Please turn it on. Retrying in 15 sec...");
+                handler.postDelayed(() -> enableBluetoothIfNeeded(ScanningService.this::startDiscovery), 15_000);
+                return;
+            }
             onScanFinished();
         } else if (BluetoothDevice.ACTION_FOUND.equals(action)) {
             BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
@@ -205,6 +327,16 @@ public class ScanningService extends Service {
                 foundDevices.add(deviceInfo);
                 Log.d(TAG, "Found device: " + deviceInfo);
                 sendStatusUpdate("Device found: " + deviceInfo);
+
+                // Persist current list so UI can restore on reopen
+                persistDevices(foundDevices);
+
+                // Immediately update the UI list so user can select without waiting
+                Intent listIntent = new Intent(ACTION_SCAN_RESULTS);
+                listIntent.putStringArrayListExtra("devices", foundDevices);
+                listIntent.setPackage(getApplicationContext().getPackageName());
+                sendBroadcast(listIntent);
+
                 // Cancel ongoing Bluetooth discovery if still running.
                 if (bluetoothAdapter.isDiscovering()) {
                     bluetoothAdapter.cancelDiscovery();
@@ -229,7 +361,8 @@ public class ScanningService extends Service {
         if (scanFinishedHandled) {
             return;
         }
-        scanFinishedHandled = true; // Mark as handled.
+        scanFinishedHandled = true; // Mark as handled
+        isScanning = false; // mark scan as ended
 
         timerHandler.removeCallbacksAndMessages(null);
         int count = foundDevices.size();
@@ -242,6 +375,8 @@ public class ScanningService extends Service {
         updateIntent.putStringArrayListExtra("devices", foundDevices);
         updateIntent.setPackage(getApplicationContext().getPackageName());
         sendBroadcast(updateIntent);
+        // Persist final list
+        persistDevices(foundDevices);
 
         // Adaptive logic:
         if (!isExtendedSearch) {  // Initial scan branch.
@@ -280,7 +415,8 @@ public class ScanningService extends Service {
         handler.postDelayed(() -> {
             // Double-check that the service is still active.
             if (isServiceActive) {
-                startDiscovery();
+                // Ensure Bluetooth enable flow runs so user sees proper messages
+                enableBluetoothIfNeeded(ScanningService.this::startDiscovery);
             }
         }, SCAN_INTERVAL_MS);
     }
@@ -290,6 +426,26 @@ public class ScanningService extends Service {
         updateNotification("Sleeping for " + (sleepMs / 60000) + " minutes");
         sendStatusUpdate("Sleeping for " + (sleepMs / 60000) + " minutes");
         Log.d(TAG, "Sleeping for " + sleepMs + " ms, then restart scan");
+        // Enter sleep mode so no scans can start
+        isSleeping = true;
+
+        // Persist sleep end time so we can resume if the process restarts
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+            prefs.edit().putLong("sleep_until", System.currentTimeMillis() + sleepMs).apply();
+        } catch (Exception ignored) {}
+
+        // Fully stop any ongoing/queued scan work before scheduling sleep
+        try { timerHandler.removeCallbacksAndMessages(null); } catch (Exception ignored) {}
+        try { handler.removeCallbacksAndMessages(null); } catch (Exception ignored) {}
+        try {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+            if (bluetoothAdapter != null && bluetoothAdapter.isDiscovering()) {
+                bluetoothAdapter.cancelDiscovery();
+            }
+        } catch (Exception ignored) {}
 
         // Remove any pending sleep timer callbacks from the previous instance.
         if (currentSleepTimer != null) {
@@ -304,13 +460,30 @@ public class ScanningService extends Service {
 
     // Start an initial scan.
     private void startInitialScan() {
+        // Do not allow initial scan to start while sleeping
+        if (isSleeping) {
+            Log.d(TAG, "startInitialScan called while sleeping; ignoring");
+            return;
+        }
+        // Extra guard: if persisted sleep_until is still in future, restore sleep state and do not start
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+            long until = prefs.getLong("sleep_until", 0L);
+            if (until > System.currentTimeMillis()) {
+                isSleeping = true;
+                Log.d(TAG, "startInitialScan: persisted sleep active; ignoring");
+                return;
+            }
+        } catch (Exception ignored) {}
         scanFinishedHandled = false; // Reset flag for new cycle.
         isExtendedSearch = false;
         extendedSearchElapsed = 0;
+        isSleeping = false; // defensively clear sleeping
+        hasEverStartedScan = true; // mark that we initiated scanning
         foundDevices.clear();
         updateNotification("Starting initial scan");
         sendStatusUpdate("Starting initial scan");
-        enableBluetoothIfNeeded(this::startDiscovery);
+        enableBluetoothIfNeeded(ScanningService.this::startDiscovery);
     }
 
     // Start an extended search cycle.
@@ -318,6 +491,7 @@ public class ScanningService extends Service {
         scanFinishedHandled = false; // Reset flag for new cycle.
         isExtendedSearch = true;
         extendedSearchElapsed = 0;
+        isSleeping = false; // ensure not sleeping in extended search
         foundDevices.clear();
         updateNotification("Starting extended search");
         sendStatusUpdate("Starting extended search");
@@ -326,6 +500,13 @@ public class ScanningService extends Service {
 
     // Start Bluetooth discovery.
     private void startDiscovery() {
+        // Do not start discovery while sleeping or if a scan is already in progress
+        if (isSleeping || isScanning) return;
+        // If Bluetooth is OFF (user toggled during wait), route through enable flow for proper UI
+        if (!bluetoothAdapter.isEnabled()) {
+            enableBluetoothIfNeeded(ScanningService.this::startDiscovery);
+            return;
+        }
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
                 != PackageManager.PERMISSION_GRANTED) {
             return;
@@ -333,8 +514,11 @@ public class ScanningService extends Service {
         if (bluetoothAdapter.isDiscovering()) {
             bluetoothAdapter.cancelDiscovery();
         }
+        // Reset state for a fresh scan cycle so results broadcast correctly
+        scanFinishedHandled = false;
         foundDevices.clear();
         bluetoothAdapter.startDiscovery();
+        isScanning = true;
         Log.d(TAG, "Bluetooth discovery started");
 
         scanStartTime = System.currentTimeMillis();
@@ -350,16 +534,36 @@ public class ScanningService extends Service {
 
     // Enable Bluetooth if it’s not enabled, then run onEnabled action.
     private void enableBluetoothIfNeeded(Runnable onEnabled) {
+        // Do not try to enable/start scanning while sleeping
+        if (isSleeping) return;
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
                 != PackageManager.PERMISSION_GRANTED) {
+            // Surface permission issue to UI and notification as well
+            updateNotification("Missing Bluetooth permission");
+            sendStatusUpdate("Missing Bluetooth permission");
             return;
         }
         if (bluetoothAdapter.isEnabled()) {
             onEnabled.run();
         } else {
+            // Notify user via notification and UI
+            updateNotification("Enabling Bluetooth... Waiting 2 sec.");
+            sendStatusUpdate("Enabling Bluetooth... Waiting 2 sec.");
+
             bluetoothAdapter.enable();
             Log.d(TAG, "Bluetooth not enabled. Enabling... Waiting 2 sec.");
-            handler.postDelayed(onEnabled, 2000);
+            handler.postDelayed(() -> {
+                if (bluetoothAdapter.isEnabled()) {
+                    updateNotification("Bluetooth enabled. Starting scan...");
+                    sendStatusUpdate("Bluetooth enabled. Starting scan...");
+                    onEnabled.run();
+                } else {
+                    // Could not enable; inform UI and retry after 15 sec
+                    updateNotification("Bluetooth could not be enabled. Please turn it on. Retrying in 15 sec...");
+                    sendStatusUpdate("Bluetooth could not be enabled. Please turn it on. Retrying in 15 sec...");
+                    handler.postDelayed(() -> enableBluetoothIfNeeded(onEnabled), 15_000);
+                }
+            }, 2000);
         }
     }
 
@@ -377,6 +581,8 @@ public class ScanningService extends Service {
 
     // Broadcast a status update.
     private void sendStatusUpdate(String status) {
+        // Persist status for UI restoration
+        saveStatusToPrefs(status);
         Intent intent = new Intent(ACTION_STATUS_UPDATE);
         intent.putExtra("status", status);
         intent.setPackage(getApplicationContext().getPackageName());
@@ -385,18 +591,61 @@ public class ScanningService extends Service {
     }
 
     private void clearScanStatusState() {
-        SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        android.content.SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+        // Keep scanned_devices and status_text so UI can persist across app restarts; only clear volatile timers
         prefs.edit()
-                .remove("scanning_status")
                 .remove("remaining_time")
-                .remove("scanned_devices")
+                .remove("remaining_sleep")
                 .apply();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // If DockingService is running, do not run scanning to avoid conflicting timers/UI
+        if (isDockingServiceRunning()) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        boolean reset = intent != null && intent.getBooleanExtra(EXTRA_RESET_PROTOCOL, false);
+        if (reset) {
+            try { if (currentSleepTimer != null) handler.removeCallbacks(currentSleepTimer); } catch (Exception ignored) {}
+            isSleeping = false;
+            try { getSharedPreferences("app_state", MODE_PRIVATE).edit().remove("sleep_until").apply(); } catch (Exception ignored) {}
+            hasEverStartedScan = false;
+            if (!isScanning) startInitialScan();
+            Log.d(TAG, "onStartCommand called (reset)");
+            return START_STICKY;
+        }
+        // Persisted sleep guard: if still within sleep window, do not start scanning on app reopen
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences("app_state", MODE_PRIVATE);
+            long until = prefs.getLong("sleep_until", 0L);
+            long now = System.currentTimeMillis();
+            if (until > now) {
+                isSleeping = true;
+                Log.d(TAG, "onStartCommand: still sleeping; ignoring start");
+                return START_STICKY;
+            }
+        } catch (Exception ignored) {}
+        // If sleeping, ignore app reopen starts; keep sleeping
+        if (isSleeping) {
+            Log.d(TAG, "onStartCommand received while sleeping; ignoring");
+            return START_STICKY;
+        }
+        // Start scanning only once on first start if not already scanning
+        if (!hasEverStartedScan && !isScanning) {
+            startInitialScan();
+        }
         Log.d(TAG, "onStartCommand called");
         return START_STICKY;
+    }
+
+    private boolean isDockingServiceRunning() {
+        android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        for (android.app.ActivityManager.RunningServiceInfo s : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if ("com.example.myapplication.DockingService".equals(s.service.getClassName())) return true;
+        }
+        return false;
     }
 
     @Override
@@ -405,7 +654,8 @@ public class ScanningService extends Service {
         isServiceActive = false;
         timerHandler.removeCallbacksAndMessages(null);
         handler.removeCallbacksAndMessages(null);
-        unregisterReceiver(discoveryReceiver);
+        try { unregisterReceiver(discoveryReceiver); } catch (Exception ignored) {}
+        try { unregisterReceiver(btStateReceiver); } catch (Exception ignored) {}
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
                 != PackageManager.PERMISSION_GRANTED) {
             return;
@@ -413,7 +663,7 @@ public class ScanningService extends Service {
         if (bluetoothAdapter != null && bluetoothAdapter.isDiscovering()) {
             bluetoothAdapter.cancelDiscovery();
         }
-        clearScanStatusState();
+        //clearScanStatusState();
         super.onDestroy();
     }
 

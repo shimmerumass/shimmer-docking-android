@@ -11,9 +11,9 @@ import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
-import android.widget.Toast;
 
 import com.google.firebase.analytics.FirebaseAnalytics;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
@@ -30,7 +30,12 @@ import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.logging.Handler;
 import java.util.stream.Collectors;
+
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.os.SystemClock;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -49,8 +54,8 @@ public class ShimmerFileTransferClient {
     private BluetoothSocket socket = null;
 
     // Constructor
-    public ShimmerFileTransferClient(Context context) {
-        this.context = context;
+    public ShimmerFileTransferClient(Context ctx) {
+        this.context = ctx.getApplicationContext();
         firebaseAnalytics = FirebaseAnalytics.getInstance(context.getApplicationContext());
         crashlytics = FirebaseCrashlytics.getInstance();
     }
@@ -69,6 +74,48 @@ public class ShimmerFileTransferClient {
     // Configuration
     private static final int CHUNK_GROUP_SIZE = 16;
 
+    // Schedule a retry of TransferService without using Handlers
+    private void scheduleTransferRetry(String macAddress, long delayMs) {
+        try {
+            android.app.AlarmManager am = (android.app.AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) throw new IllegalStateException("AlarmManager not available");
+
+            Intent intent = new Intent("com.example.myapplication.TRANSFER_RETRY");
+            intent.setPackage(context.getPackageName());
+            intent.putExtra("mac_address", macAddress);
+            int requestCode = 2001;
+            int flags = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M
+                    ? android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+                    : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
+            android.app.PendingIntent pi = android.app.PendingIntent.getBroadcast(context, requestCode, intent, flags);
+
+            long triggerAt = android.os.SystemClock.elapsedRealtime() + delayMs;
+
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    am.setExactAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi);
+                } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+                    am.setExact(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi);
+                } else {
+                    am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi);
+                }
+            } catch (SecurityException se) {
+                // Fallback to inexact alarm without exact-alarm permission
+                am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi);
+            }
+        } catch (Exception e) {
+            // Last-resort fallback: post a delayed broadcast; works while app process is alive
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    Intent retry = new Intent("com.example.myapplication.TRANSFER_RETRY");
+                    retry.setPackage(context.getPackageName());
+                    retry.putExtra("mac_address", macAddress);
+                    context.sendBroadcast(retry);
+                } catch (Exception ignored) {}
+            }, delayMs);
+        }
+    }
+
     public void transferOneFileFullFlow(String macAddress) {
         // Log the start of the file transfer
         Log.d(TAG, "Starting file transfer for MAC address: " + macAddress);
@@ -78,6 +125,8 @@ public class ShimmerFileTransferClient {
         Bundle startBundle = new Bundle();
         startBundle.putString("mac_address", macAddress);
         firebaseAnalytics.logEvent("file_transfer_started", startBundle);
+
+        boolean allFilesTransferred = false; // track overall success
 
         try {
             // --- STEP 1: Establish Bluetooth Connection ---
@@ -123,7 +172,9 @@ public class ShimmerFileTransferClient {
             if (!connected) {
                 Log.e(TAG, "Unable to connect to sensor after 3 retries");
                 crashlytics.log("Unable to connect to sensor after 3 retries");
-                showToast("Failed to connect to sensor. Please check if it's on and in range.");
+                // Centralized UI + retry handling
+                // Update timer
+                uiErrorAndRetry("Failed to connect to sensor. Retrying after 15:00", 60, "connect", macAddress);
                 return;
             }
             Log.d(TAG, "Connected to Shimmer: " + macAddress);
@@ -146,20 +197,7 @@ public class ShimmerFileTransferClient {
                 Log.e(TAG, "Expected FILE_LIST_RESPONSE (D3) but got: " + String.format("%02X", responseId));
                 crashlytics.log("Expected FILE_LIST_RESPONSE (D3) but got: " + String.format("%02X", responseId));
 
-                clearTransferProgressStateAndNotifyUI("Unexpected header, restarting after 1:00", 60);
-
-                // Schedule restart after 1 minute
-                new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
-                    clearTransferProgressStateAndNotifyUI("", 0);
-                    Intent transferIntent = new Intent(context, TransferService.class);
-                    transferIntent.putExtra(TransferService.EXTRA_MAC_ADDRESS, macAddress);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(transferIntent);
-                    } else {
-                        context.startService(transferIntent);
-                    }
-                }, 60_000);
-
+                uiErrorAndRetry("Unexpected header, restarting after 1:00", 60, "unexpected_header", macAddress);
                 return;
             }
             int fileCount = in.read() & 0xFF;
@@ -175,7 +213,7 @@ public class ShimmerFileTransferClient {
             if (fileCount <= 0) {
                 Log.e(TAG, "No files available for transfer");
                 crashlytics.log("No files available for transfer");
-                return;
+                return; // do NOT send TRANSFER_DONE
             }
 
             // --- STEP 3: Transfer Each File ---
@@ -210,7 +248,8 @@ public class ShimmerFileTransferClient {
                 }
                 if (startByte != (TRANSFER_START_PACKET & 0xFF)) {
                     Log.e(TAG, "Expected TRANSFER_START_PACKET (FD) but got: " + String.format("%02X", startByte));
-                    return;
+                    uiErrorAndRetry("Device disconnected or unexpected start. Restarting after 1:00", 60, "unexpected_start", macAddress);
+                    return; // abort this session; do NOT send TRANSFER_DONE
                 }
 
                 // Extract metadata
@@ -304,19 +343,7 @@ public class ShimmerFileTransferClient {
                                 db.delete("files", "FILE_PATH=?", new String[]{outputFile.getAbsolutePath()});
                                 db.close();
 
-                                clearTransferProgressStateAndNotifyUI("Unexpected header, restarting after 1:00", 60);
-
-                                // Schedule restart after 1 minute
-                                new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
-                                    clearTransferProgressStateAndNotifyUI("", 0);
-                                    Intent transferIntent = new Intent(context, TransferService.class);
-                                    transferIntent.putExtra(TransferService.EXTRA_MAC_ADDRESS, macAddress);
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                        context.startForegroundService(transferIntent);
-                                    } else {
-                                        context.startService(transferIntent);
-                                    }
-                                }, 60_000);
+                                uiErrorAndRetry("Unexpected header, restarting after 1:00", 60, "unexpected_header", macAddress);
                                 return;
                             }
 
@@ -395,7 +422,6 @@ public class ShimmerFileTransferClient {
                     
                     if (!gotResponse) {
                             Log.e(TAG, "No response after 2 ACK retries. Scheduling transfer restart in 1 minute.");
-                            showToast("Connection lost. No response from sensor.");
                             // Delete incomplete file and DB entry
                             if (outputFile.exists()) outputFile.delete();
                             FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
@@ -403,19 +429,7 @@ public class ShimmerFileTransferClient {
                             db.delete("files", "FILE_PATH=?", new String[]{outputFile.getAbsolutePath()});
                             db.close();
 
-                            clearTransferProgressStateAndNotifyUI("No response from sensor, restarting after 1:00", 60);
-
-                            // Schedule restart after 1 minute
-                            new android.os.Handler(context.getMainLooper()).postDelayed(() -> {
-                                clearTransferProgressStateAndNotifyUI("", 0);
-                                Intent transferIntent = new Intent(context, TransferService.class);
-                                transferIntent.putExtra(TransferService.EXTRA_MAC_ADDRESS, macAddress);
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    context.startForegroundService(transferIntent);
-                                } else {
-                                    context.startService(transferIntent);
-                                }
-                            }, 60_000);
+                            uiErrorAndRetry("No response from sensor, restarting after 1:00", 60, "ack_timeout", macAddress);
                             return; // Exit the transfer method
                         }
                         // --- END OF ACK Retry Protocol ---
@@ -461,16 +475,16 @@ public class ShimmerFileTransferClient {
                     }
                 } catch (IOException e) {
                     Log.e(TAG, "!!! CHUNK-LEVEL IOException. Hard failure during active file writing.");
-                    showToast("Network connection lost during transfer.");
                     Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
                     crashlytics.recordException(e);
 
-                    // Log available bytes in the input stream before aborting
+                    uiErrorAndRetry("Bluetooth disconnected. Restarting after 1:00", 60, "io", macAddress);
+
+                    // Log available bytes in the input stream before aborting (best-effort)
                     try {
                         int availableBytes = in.available();
                         try (FileWriter debugWriter = new FileWriter(debugFile, true)) {
                             debugWriter.write("Available bytes in stream before aborting: " + availableBytes + "\n");
-
                             byte[] debugBytes = new byte[availableBytes];
                             int bytesRead = in.read(debugBytes);
                             if (bytesRead > 0) {
@@ -484,6 +498,8 @@ public class ShimmerFileTransferClient {
                     } catch (IOException streamError) {
                         Log.e(TAG, "Error reading available bytes: " + streamError.getMessage(), streamError);
                     }
+
+                    return;
                 } finally {
                     // Delete incomplete file if transfer was not successful
                     if (!transferSuccess && outputFile.exists()) {
@@ -492,16 +508,17 @@ public class ShimmerFileTransferClient {
                     }
                 }
 
-                // ---- ADD THIS BLOCK HERE: ----
-                FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
-                SQLiteDatabase db = dbHelper.getWritableDatabase();
-                android.content.ContentValues values = new android.content.ContentValues();
-                values.put("TIMESTAMP", timestamp);
-                values.put("FILE_PATH", outputFile.getAbsolutePath());
-                values.put("SYNCED", 0);
-                db.insert("files", null, values);
-                db.close();
-                // ---- END OF BLOCK ----
+                // Only record in DB if the file completed successfully
+                if (transferSuccess) {
+                    FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
+                    SQLiteDatabase db = dbHelper.getWritableDatabase();
+                    android.content.ContentValues values = new android.content.ContentValues();
+                    values.put("TIMESTAMP", timestamp);
+                    values.put("FILE_PATH", outputFile.getAbsolutePath());
+                    values.put("SYNCED", 0);
+                    db.insert("files", null, values);
+                    db.close();
+                }
 
                 progressIntent = new Intent("com.example.myapplication.TRANSFER_PROGRESS");
                 progressIntent.setPackage(context.getPackageName());
@@ -510,9 +527,11 @@ public class ShimmerFileTransferClient {
                 progressIntent.putExtra("filename", newFilename);
                 context.getApplicationContext().sendBroadcast(progressIntent);
             }
+            // If we completed the loop without returning, mark overall success
+            allFilesTransferred = true;
+
         } catch (IOException | InterruptedException e) {
             Log.e(TAG, "!!! TOP-LEVEL IOException. Hard failure outside the file writing loop.");
-            showToast("Network error. Please try again.");
             Log.e(TAG, "Error during file transfer: " + e.getMessage(), e);
             crashlytics.log("Error during file transfer: " + e.getMessage());
             crashlytics.recordException(e);
@@ -522,16 +541,9 @@ public class ShimmerFileTransferClient {
             transferErrorBundle.putString("error_message", e.getMessage());
             firebaseAnalytics.logEvent("file_transfer_error", transferErrorBundle);
 
-            clearTransferProgressStateAndNotifyUI(e.getMessage(), 5);
+            uiErrorAndRetry(e.getMessage(), 5, "top_level", macAddress);
         } finally {
-            Log.d(TAG, "File transfer completed for MAC address: " + macAddress);
-            Log.d(FIREBASE_TAG, "Logging file transfer completion to Firebase for MAC address: " + macAddress);
-            crashlytics.log("File transfer completed for MAC address: " + macAddress);
-
-            Bundle endBundle = new Bundle();
-            endBundle.putString("mac_address", macAddress);
-            firebaseAnalytics.logEvent("file_transfer_completed", endBundle);
-
+            // Close socket safely
             if (socket != null) {
                 try {
                     socket.close();
@@ -541,9 +553,13 @@ public class ShimmerFileTransferClient {
                 }
                 socket = null;
             }
-            Intent doneIntent = new Intent("com.example.myapplication.TRANSFER_DONE");
-            doneIntent.setPackage(context.getPackageName());
-            context.sendBroadcast(doneIntent);
+
+            // Only broadcast TRANSFER_DONE if everything actually succeeded
+            if (allFilesTransferred) {
+                Intent doneIntent = new Intent("com.example.myapplication.TRANSFER_DONE");
+                doneIntent.setPackage(context.getPackageName());
+                context.sendBroadcast(doneIntent);
+            }
         }
     }
 
@@ -551,6 +567,12 @@ public class ShimmerFileTransferClient {
         byte[] buffer = new byte[len];
         int totalRead = 0;
         while (totalRead < len) {
+            // Abort quickly if Bluetooth was turned off mid-transfer
+            BluetoothAdapter ba = BluetoothAdapter.getDefaultAdapter();
+            if (ba != null && !ba.isEnabled()) {
+                throw new IOException("Bluetooth disabled");
+            }
+
             int read = in.read(buffer, totalRead, len - totalRead);
             if (read == -1) {
                 throw new EOFException("Stream ended unexpectedly. Needed " + len + " bytes, but only got " + totalRead);
@@ -617,8 +639,7 @@ public class ShimmerFileTransferClient {
             Log.d(SYNC_TAG, "Found " + missing.size() + " files missing on S3.");
         } catch (Exception e) {
             Log.e(SYNC_TAG, "Error checking missing files: " + e.getMessage());
-            showToast("Cloud sync failed: No network connection");
-            // On network error, assume all files are missing to be safe.
+            // Do not Toast from background; signal by returning all files as missing
             // This prevents them from being incorrectly marked as synced.
             return localFiles.stream().map(File::getName).collect(Collectors.toList());
         }
@@ -658,8 +679,8 @@ public class ShimmerFileTransferClient {
             }
         } catch (Exception e) {
             Log.e(SYNC_TAG, "Exception during S3 upload: " + e.getMessage(), e);
-            showToast("File upload failed: No network connection");
             crashlytics.recordException(e);
+            // Do not Toast from background thread
             return false;
         }
     }
@@ -696,7 +717,68 @@ public class ShimmerFileTransferClient {
         context.getApplicationContext().sendBroadcast(intent);
     }
 
-    private void showToast(String message) {
-        Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+    // Central helper: reflect UI error, schedule retry, and broadcast failure reason
+    private void uiErrorAndRetry(String message, int retrySeconds, String reason, String macAddress) {
+        clearTransferProgressStateAndNotifyUI(message, retrySeconds);
+        if (retrySeconds > 0) {
+            try {
+                scheduleTransferRetry(macAddress, retrySeconds * 1000L);
+            } catch (Exception ignored) {}
+        }
+        try {
+            Intent fail = new Intent("com.example.myapplication.TRANSFER_FAILED");
+            fail.setPackage(context.getPackageName());
+            if (reason != null) fail.putExtra("reason", reason);
+            context.sendBroadcast(fail);
+        } catch (Exception ignored) {}
+    }
+
+    // Persist transfer state so UI can restore after app reopen
+    private void persistTransferState(String status, String error, int retrySeconds, String mac) {
+        try {
+            android.content.SharedPreferences prefs = context.getSharedPreferences("app_state", android.content.Context.MODE_PRIVATE);
+            android.content.SharedPreferences.Editor ed = prefs.edit();
+            if (status != null) ed.putString("transfer_status", status); // running | failed | success | idle
+            if (error != null) ed.putString("transfer_error", error); else ed.remove("transfer_error");
+            ed.putInt("transfer_retry_sec", Math.max(0, retrySeconds));
+            if (mac != null) ed.putString("transfer_mac", mac);
+            ed.apply();
+        } catch (Throwable ignored) {}
+    }
+
+    // Example wrapper where chunks are written; adapt to your real write loop
+    private void writeChunkToFile(File tempOutFile, byte[] data, int len) throws IOException {
+        // ...existing code that writes 'len' bytes to 'tempOutFile'...
+    }
+
+    // Call this on any IO/disconnect error inside your transfer loop
+    private void handleTransferError(File tempOutFile, String reason, Exception e) {
+        Log.e("ShimmerTransfer", "Transfer failed: " + reason, e);
+        safelyMarkPartial(tempOutFile);
+        broadcastFailure(reason);
+    }
+
+    private void safelyMarkPartial(File tempOutFile) {
+        if (tempOutFile == null) return;
+        try {
+            if (tempOutFile.exists()) {
+                File partial = new File(tempOutFile.getParentFile(), tempOutFile.getName() + ".partial");
+                // Rename temp file to .partial to inspect/debug later; do not delete silently
+                boolean ok = tempOutFile.renameTo(partial);
+                if (!ok) {
+                    // Fallback: keep as-is, but do not delete
+                    Log.w("ShimmerTransfer", "Failed to rename temp to .partial; leaving temp file.");
+                }
+            }
+        } catch (Exception ex) {
+            Log.w("ShimmerTransfer", "Partial file handling failed", ex);
+        }
+    }
+
+    private void broadcastFailure(String reason) {
+        Intent i = new Intent(DockingService.ACTION_TRANSFER_FAILED);
+        i.setPackage(context.getPackageName());
+        i.putExtra("reason", reason);
+        context.sendBroadcast(i);
     }
 }
