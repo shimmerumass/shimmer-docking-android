@@ -10,8 +10,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.net.ConnectivityManager;
-import android.net.NetworkInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -65,7 +63,8 @@ public class DockingService extends Service implements DockingManager.DockingCal
         public void onReceive(Context context, Intent intent) {
             String reason = intent.getStringExtra("reason");
             Log.w("DockingService", "Transfer failed. Reason=" + reason);
-            updateNotification("Transfer failed (" + (reason != null ? reason : "error") + "). Will retry in 15 min.");
+            // Avoid time-specific/network-like wording
+            updateNotification("Transfer failed" + (reason != null ? " (" + reason + ")" : "") + ". Will retry automatically.");
             scheduleRetry();
         }
     };
@@ -86,18 +85,6 @@ public class DockingService extends Service implements DockingManager.DockingCal
                 updateNotification("Bluetooth off. Entering silent state (15 min)...");
                 sendDockingStatus("Bluetooth off. Entering silent state (15 min)...");
                 if (dockingManager != null) dockingManager.forceSilentState();
-                scheduleRetry();
-            }
-        }
-    };
-
-    // Basic connectivity watcher (covers Wi‑Fi off for upload step)
-    private final BroadcastReceiver connectivityReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (!isNetworkConnected()) {
-                Log.w("DockingService", "Network disconnected. Scheduling retry.");
-                updateNotification("No network. Retrying in 15 min.");
                 scheduleRetry();
             }
         }
@@ -125,7 +112,6 @@ public class DockingService extends Service implements DockingManager.DockingCal
         registerReceiver(transferDoneReceiver, new IntentFilter(ACTION_TRANSFER_DONE), Context.RECEIVER_NOT_EXPORTED);
         registerReceiver(transferFailedReceiver, new IntentFilter(ACTION_TRANSFER_FAILED), Context.RECEIVER_NOT_EXPORTED);
         registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), Context.RECEIVER_NOT_EXPORTED);
-        registerReceiver(connectivityReceiver, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION), Context.RECEIVER_NOT_EXPORTED);
     }
 
     @Override
@@ -142,7 +128,6 @@ public class DockingService extends Service implements DockingManager.DockingCal
         try { unregisterReceiver(transferDoneReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(transferFailedReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(btStateReceiver); } catch (Exception ignored) {}
-        try { unregisterReceiver(connectivityReceiver); } catch (Exception ignored) {}
 
         // Restart ScanningService
         Intent scanIntent = new Intent(this, ScanningService.class);
@@ -244,12 +229,5 @@ public class DockingService extends Service implements DockingManager.DockingCal
         next.set(Calendar.HOUR_OF_DAY, start);
         long diff = next.getTimeInMillis() - cal.getTimeInMillis();
         return Math.max(1000L, diff);
-    }
-
-    private boolean isNetworkConnected() {
-        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (cm == null) return false;
-        NetworkInfo ni = cm.getActiveNetworkInfo();
-        return ni != null && ni.isConnected();
     }
 }

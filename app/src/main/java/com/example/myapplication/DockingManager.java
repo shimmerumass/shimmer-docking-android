@@ -56,6 +56,9 @@ public class DockingManager {
     // Notification support for Docking status
     private static final String DOCKING_CHANNEL_ID = "ShimmerDockingChannel"; // unused but kept for clarity
 
+    // Prevent duplicate protocol runs; set true on start, reset only after silent state ends
+    private final java.util.concurrent.atomic.AtomicBoolean protocolActive = new java.util.concurrent.atomic.AtomicBoolean(false);
+
     public DockingManager(Context ctx, DockingCallback cb) {
         this.context = ctx;
         this.callback = cb;
@@ -256,7 +259,11 @@ public class DockingManager {
             }
             adapter.disable();
         }
-        handler.postDelayed(this::startInitializationScan, silentStateDurationMs);
+        handler.postDelayed(() -> {
+            // Release single-flight guard only after silent ends
+            protocolActive.set(false);
+            startInitializationScan();
+        }, silentStateDurationMs);
     }
 
     // State 5: Direct Query and Connection
@@ -448,8 +455,15 @@ public class DockingManager {
     // Night docking entry point (called by DockingService)
     public void startNightDockingFlow() {
         Log.d(TAG, "startNightDockingFlow() called");
+        // Single-flight: ignore if protocol is already active (including during silent window)
+        if (!protocolActive.compareAndSet(false, true)) {
+            Log.d(TAG, "Docking protocol already active. Ignoring startNightDockingFlow.");
+            return;
+        }
         if (!isNightWindow()) {
             Log.d(TAG, "Not in night window, docking protocol will NOT start.");
+            // Release guard since we didn’t actually start
+            protocolActive.set(false);
             return;
         }
         Log.d(TAG, "Starting night docking protocol...");
