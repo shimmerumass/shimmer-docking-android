@@ -18,6 +18,7 @@ import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.NumberPicker;
@@ -26,6 +27,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.app.ActivityCompat;
@@ -38,10 +40,19 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics;
 
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE = 1001;
@@ -76,6 +87,8 @@ public class MainActivity extends AppCompatActivity {
     private Button transferButton;
 
     // Receiver to reflect transfer/sync lifecycle in UI
+
+
     private final BroadcastReceiver transferSyncReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -95,6 +108,23 @@ public class MainActivity extends AppCompatActivity {
             }
         }
     };
+
+    private void showProgress(String msg) {
+        if (progressSection != null) progressSection.setVisibility(View.VISIBLE);
+        if (progressText != null) progressText.setText(msg);
+        if (transferProgressBar != null) {
+            transferProgressBar.setIndeterminate(true);
+            transferProgressBar.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void hideProgress() {
+        if (progressSection != null) progressSection.setVisibility(View.GONE);
+    }
+
+    private void hideProgressDelayed(long ms) {
+        if (progressSection != null) progressSection.postDelayed(this::hideProgress, ms);
+    }
 
     // Receivers for Bluetooth scanning and transfer progress
     private final BroadcastReceiver timerReceiver = new BroadcastReceiver() {
@@ -145,7 +175,7 @@ public class MainActivity extends AppCompatActivity {
                 // Disable buttons and hide stop scanning during transfer
                 syncButton.setEnabled(false);
                 transferButton.setEnabled(false);
-                
+
 
                 int percent = (int) ((progress * 100.0f) / total);
                 String display;
@@ -365,7 +395,7 @@ public class MainActivity extends AppCompatActivity {
             transferProgressBar.setProgress(progress);
             progressSection.setVisibility(visibility);
         }
-    
+
 
         restoreUIState();
 
@@ -412,8 +442,13 @@ public class MainActivity extends AppCompatActivity {
             prefs.edit().putBoolean("is_first_launch", false).apply();
         }
 
+        // Wire About and Map buttons
         MaterialButton aboutButton = findViewById(R.id.aboutButton);
         aboutButton.setOnClickListener(v -> showAboutDialog());
+        android.view.View mapButton = findViewById(R.id.mapButton);
+        if (mapButton != null) {
+            mapButton.setOnClickListener(v -> onMapDeviceButtonClicked());
+        }
 
         updateDockingHoursText();
         findViewById(R.id.changeDockingHoursButton).setOnClickListener(v -> showDockingHoursPopup());
@@ -780,14 +815,14 @@ public class MainActivity extends AppCompatActivity {
                 startScanningService();
             } else {
                 new androidx.appcompat.app.AlertDialog.Builder(this)
-                    .setTitle("Permissions Required")
-                    .setMessage("Permissions are required for scanning. Please grant them to continue.")
-                    .setPositiveButton("Retry", (dialog, which) -> {
-                        ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
-                    })
-                    .setNegativeButton("Exit", (dialog, which) -> finish())
-                    .setCancelable(false)
-                    .show();
+                        .setTitle("Permissions Required")
+                        .setMessage("Permissions are required for scanning. Please grant them to continue.")
+                        .setPositiveButton("Retry", (dialog, which) -> {
+                            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
+                        })
+                        .setNegativeButton("Exit", (dialog, which) -> finish())
+                        .setCancelable(false)
+                        .show();
             }
         }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
@@ -859,28 +894,28 @@ public class MainActivity extends AppCompatActivity {
         ScrollView scrollView = new ScrollView(this);
         TextView aboutText = new TextView(this);
         aboutText.setText(
-            "About Shimmer Sensor App\n\n" +
-            "This app helps you connect to your Shimmer sensor, transfer files, and sync data to the cloud.\n\n" +
-            "How to Operate:\n" +
-            "1. Make sure Bluetooth is enabled on your device.\n" +
-            "2. Tap 'Start Transfer' to begin transferring sensor data.\n" +
-            "3. Tap 'Sync to Cloud' to upload files.\n" +
-            "4. Tap 'Start Docking' to connect to a docked sensor.\n\n" +
-            "Accessibility:\n" +
-            "- Large buttons and text for easy use.\n" +
-            "- High contrast colors for readability.\n" +
-            "- Designed for older adults and stroke patients.\n\n" +
-            "If you need help, ask a caregiver or family member."
+                "About Shimmer Sensor App\n\n" +
+                        "This app helps you connect to your Shimmer sensor, transfer files, and sync data to the cloud.\n\n" +
+                        "How to Operate:\n" +
+                        "1. Make sure Bluetooth is enabled on your device.\n" +
+                        "2. Tap 'Start Transfer' to begin transferring sensor data.\n" +
+                        "3. Tap 'Sync to Cloud' to upload files.\n" +
+                        "4. Tap 'Start Docking' to connect to a docked sensor.\n\n" +
+                        "Accessibility:\n" +
+                        "- Large buttons and text for easy use.\n" +
+                        "- High contrast colors for readability.\n" +
+                        "- Designed for older adults and stroke patients.\n\n" +
+                        "If you need help, ask a caregiver or family member."
         );
         aboutText.setPadding(32, 32, 32, 32);
         aboutText.setTextSize(18f);
         scrollView.addView(aboutText);
 
         new androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("About")
-            .setView(scrollView)
-            .setPositiveButton("Close", null)
-            .show();
+                .setTitle("About")
+                .setView(scrollView)
+                .setPositiveButton("Close", null)
+                .show();
     }
 
     // Docking hours popup and logic
@@ -949,21 +984,21 @@ public class MainActivity extends AppCompatActivity {
         scrollView.addView(layout);
 
         new androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Docking Protocol Hours")
-            .setView(scrollView)
-            .setPositiveButton("Save", (dialog, which) -> {
-                int startHour = startHourPicker.getValue();
-                int startAmPm = startAmPmPicker.getValue();
-                int endHour = endHourPicker.getValue();
-                int endAmPm = endAmPmPicker.getValue();
-                // Compute 24-hour format directly
-                int startHour24 = (startHour % 12) + (startAmPm == 1 ? 12 : 0);
-                int endHour24 = (endHour % 12) + (endAmPm == 1 ? 12 : 0);
-                setDockingHours(startHour24, endHour24);
-                updateDockingHoursText();
-            })
-            .setNegativeButton("Cancel", null)
-            .show();
+                .setTitle("Docking Protocol Hours")
+                .setView(scrollView)
+                .setPositiveButton("Save", (dialog, which) -> {
+                    int startHour = startHourPicker.getValue();
+                    int startAmPm = startAmPmPicker.getValue();
+                    int endHour = endHourPicker.getValue();
+                    int endAmPm = endAmPmPicker.getValue();
+                    // Compute 24-hour format directly
+                    int startHour24 = (startHour % 12) + (startAmPm == 1 ? 12 : 0);
+                    int endHour24 = (endHour % 12) + (endAmPm == 1 ? 12 : 0);
+                    setDockingHours(startHour24, endHour24);
+                    updateDockingHoursText();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void updateDockingHoursText() {
@@ -985,10 +1020,10 @@ public class MainActivity extends AppCompatActivity {
     }
     private void setDockingHours(int start, int end) {
         getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE)
-            .edit()
-            .putInt(KEY_START_HOUR, start)
-            .putInt(KEY_END_HOUR, end)
-            .apply();
+                .edit()
+                .putInt(KEY_START_HOUR, start)
+                .putInt(KEY_END_HOUR, end)
+                .apply();
     }
 
     private boolean isWithinDockingWindow(int currentHour, int startHour, int endHour) {
@@ -1007,20 +1042,267 @@ public class MainActivity extends AppCompatActivity {
         restoreUIState();
     }
 
-    private void showProgress(String msg) {
-        if (progressSection != null) progressSection.setVisibility(View.VISIBLE);
-        if (progressText != null) progressText.setText(msg);
-        if (transferProgressBar != null) {
-            transferProgressBar.setIndeterminate(true);
-            transferProgressBar.setVisibility(View.VISIBLE);
+
+    private void onMapDeviceButtonClicked() {
+        // Check Wi-Fi connectivity first
+        android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        boolean wifiConnected = false;
+        if (cm != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                android.net.Network nw = cm.getActiveNetwork();
+                if (nw != null) {
+                    android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(nw);
+                    wifiConnected = nc != null && nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI);
+                }
+            } else {
+                android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
+                wifiConnected = ni != null && ni.isConnected() && ni.getType() == android.net.ConnectivityManager.TYPE_WIFI;
+            }
+        }
+        if (!wifiConnected) {
+            Toast.makeText(this, "Wi-Fi required for mapping", Toast.LENGTH_SHORT).show();
+            Log.w("MapButton", "Wi-Fi not connected, aborting mapping dialog");
+            return;
+        }
+
+        // get MAC from UI or fallback
+        String mac = getAutoMacFromUi();
+        Log.d("MapButton", "Auto MAC from UI: " + mac);
+        if (mac == null || mac.isEmpty()) {
+            mac = android.provider.Settings.Secure.getString(
+                    getContentResolver(),
+                    android.provider.Settings.Secure.ANDROID_ID
+            );
+            Log.d("MapButton", "Fallback MAC (ANDROID_ID): " + mac);
+        }
+        if (mac == null || mac.isEmpty()) {
+            Log.w("MapButton", "No MAC found for mapping dialog");
+            Toast.makeText(this, "No MAC found", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // Do GET first
+        String finalMac = mac;
+        Log.d("MapButton", "Sending GET for MAC: " + finalMac);
+        new Thread(() -> {
+            try {
+                String urlStr = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/ddb/device-patient-map/"
+                        + URLEncoder.encode(finalMac, "UTF-8");
+                HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("accept", "application/json");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(15000);
+
+                int code = conn.getResponseCode();
+                String name = null;
+                if (code == 200) {
+                    BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                    StringBuilder sb = new StringBuilder();
+                    String line; while ((line = br.readLine()) != null) sb.append(line);
+                    String resp = sb.toString();
+                    name = parseNameFromResponse(resp, finalMac);
+                    Log.d("MapButton", "GET success for MAC: " + finalMac + ", name: " + name);
+                } else {
+                    Log.d("MapButton", "GET failed for MAC: " + finalMac + ", code: " + code);
+                }
+
+                String finalName = name;
+                int finalCode = code;
+                runOnUiThread(() -> {
+                    Log.d("MapButton", "Opening dialog for MAC: " + finalMac + ", mappingFound: " + (finalCode == 200 && finalName != null && !finalName.isEmpty()));
+                    showDevicePatientMapDialog(finalMac, finalName,
+                            finalCode == 200 && finalName != null && !finalName.isEmpty());
+                });
+
+            } catch (Exception e) {
+                Log.e("MapButton", "Error checking mapping: " + e.getMessage());
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "Error checking mapping: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    showDevicePatientMapDialog(finalMac, null, false);
+                });
+            }
+        }).start();
+    }
+
+    private void showDevicePatientMapDialog(String mac, String existingName, boolean mappingFound) {
+        Log.d("MapButton", "showDevicePatientMapDialog: mac=" + mac + ", mappingFound=" + mappingFound + ", name=" + existingName);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        layout.setPadding(pad, pad, pad, 0);
+
+        EditText macInput = new EditText(this);
+        macInput.setHint("Device MAC");
+        macInput.setText(mac);
+        macInput.setEnabled(false);
+        layout.addView(macInput);
+
+        EditText nameInput = new EditText(this);
+        nameInput.setHint("Patient name");
+        if (mappingFound && existingName != null && !existingName.isEmpty()) {
+            nameInput.setText(existingName);
+            nameInput.setEnabled(false); // read-only if mapping exists
+            Log.d("MapButton", "Mapping found for MAC, showing name read-only");
+            Toast.makeText(this, "Mapping found for MAC", Toast.LENGTH_SHORT).show();
+        } else {
+            nameInput.setEnabled(true);
+            Log.d("MapButton", "No mapping found, enabling name input");
+            Toast.makeText(this, "No mapping found. Enter patient name.", Toast.LENGTH_SHORT).show();
+        }
+        layout.addView(nameInput);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle("Map Device to Patient")
+                .setView(layout)
+                .setNegativeButton("Cancel", (d, w) -> d.dismiss());
+
+        AlertDialog dialog;
+        if (mappingFound && existingName != null && !existingName.isEmpty()) {
+            builder.setPositiveButton("Close", (d, w) -> d.dismiss());
+            dialog = builder.create();
+        } else {
+            builder.setPositiveButton("Save", null);
+            dialog = builder.create();
+            dialog.setOnShowListener(d -> {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                    String nameVal = nameInput.getText().toString().trim();
+                    if (nameInput.isEnabled() && nameVal.isEmpty()) {
+                        Log.d("MapButton", "Save clicked but name empty");
+                        Toast.makeText(this, "Enter patient name", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    Log.d("MapButton", "Save clicked, sending PUT for MAC: " + mac + ", name: " + nameVal);
+                    new Thread(() -> putMapping(mac, nameVal, dialog)).start();
+                });
+            });
+        }
+        dialog.show();
+    }
+
+
+    // Replace old getMapping with dialog-aware version
+    private void getMapping(String mac, EditText nameInput, EditText macInput, AlertDialog dialog) {
+        try {
+            String urlStr = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/ddb/device-patient-map/" + URLEncoder.encode(mac, "UTF-8");
+            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("accept", "application/json");
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(15000);
+            int code = conn.getResponseCode();
+            if (code == 200) {
+                BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line; while ((line = br.readLine()) != null) sb.append(line);
+                String resp = sb.toString();
+                String name = parseNameFromResponse(resp, mac);
+                runOnUiThread(() -> {
+                    if (name != null && !name.isEmpty()) {
+                        nameInput.setText(name);
+                        nameInput.setEnabled(false);
+                        macInput.setEnabled(false);
+                        // Change Save to Close
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setText("Close");
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> dialog.dismiss());
+                    } else {
+                        nameInput.setEnabled(true);
+                        macInput.setEnabled(true);
+                        // Keep Save behavior
+                    }
+                });
+            } else {
+                runOnUiThread(() -> {
+                    nameInput.setEnabled(true);
+                    macInput.setEnabled(true);
+                });
+            }
+        } catch (Exception e) {
+            runOnUiThread(() -> {
+                nameInput.setEnabled(true);
+                macInput.setEnabled(true);
+            });
         }
     }
 
-    private void hideProgress() {
-        if (progressSection != null) progressSection.setVisibility(View.GONE);
+    private void putMapping(String mac, String name, AlertDialog dialog) {
+        try {
+            String urlStr = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/ddb/device-patient-map";
+            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+            conn.setRequestMethod("PUT");
+            conn.setRequestProperty("accept", "application/json");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(15000);
+            conn.setDoOutput(true);
+            // Body per requirement: { "mac":"name" }
+            JSONObject body = new JSONObject();
+            body.put(mac, name);
+            byte[] out = body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            try (OutputStream os = conn.getOutputStream()) { os.write(out); }
+            int code = conn.getResponseCode();
+            runOnUiThread(() -> {
+                if (code >= 200 && code < 300) {
+                    Toast.makeText(this, "Mapping saved", Toast.LENGTH_SHORT).show();
+                    dialog.dismiss();
+                } else {
+                    Toast.makeText(this, "Save failed (" + code + ")", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } catch (Exception e) {
+            runOnUiThread(() -> Toast.makeText(this, "Error saving: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+        }
     }
 
-    private void hideProgressDelayed(long ms) {
-        if (progressSection != null) progressSection.postDelayed(this::hideProgress, ms);
+    private String parseNameFromResponse(String resp, String mac) {
+        try {
+            JSONObject obj = new JSONObject(resp);
+            if (obj.has("name")) return obj.optString("name", "");
+            if (obj.has(mac)) return obj.optString(mac, "");
+            if (obj.length() == 1) {
+                String key = obj.keys().next();
+                return obj.optString(key, "");
+            }
+        } catch (Exception ignored) {}
+        // Fallback: raw text if not JSON
+        return resp != null && resp.length() > 0 ? resp : null;
     }
+
+    private String getAutoMacFromUi() {
+        try {
+            android.widget.TextView ds = findViewById(R.id.dockingStatusText);
+            if (ds != null) {
+                String t = String.valueOf(ds.getText());
+                String m = extractMac(t);
+                if (m != null) return m;
+            }
+        } catch (Exception ignored) {}
+        try {
+            android.widget.TextView st = findViewById(R.id.statusText);
+            if (st != null) {
+                String t = String.valueOf(st.getText());
+                String m = extractMac(t);
+                if (m != null) return m;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private String extractMac(String text) {
+        if (text == null) return null;
+        Matcher matcher = MAC_PATTERN.matcher(text);
+        if (matcher.find()) return matcher.group();
+        return null;
+    }
+
+    private static final java.util.regex.Pattern MAC_PATTERN = java.util.regex.Pattern.compile("(?i)([0-9A-F]{2}:){5}[0-9A-F]{2}");
 }
+
+
+
+
+
+
+
+
+
