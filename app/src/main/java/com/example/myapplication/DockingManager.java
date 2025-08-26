@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
+
 public class DockingManager {
     public interface DockingCallback {
         void onDocked();
@@ -84,13 +85,26 @@ public class DockingManager {
 
     private void notifyDocking(String msg) {
         ensureDockingChannel();
-        androidx.core.app.NotificationCompat.Builder builder =
-                new androidx.core.app.NotificationCompat.Builder(context, "ShimmerScanChannel")
-                        .setContentTitle("Shimmer Docking")
-                        .setContentText(msg)
-                        .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-                        .setOnlyAlertOnce(true);
-        androidx.core.app.NotificationManagerCompat.from(context).notify(1002, builder.build());
+        try {
+            // Permission check for POST_NOTIFICATIONS (Android 13+)
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+                androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                androidx.core.app.NotificationCompat.Builder builder =
+                        new androidx.core.app.NotificationCompat.Builder(context, "ShimmerScanChannel")
+                                .setContentTitle("Shimmer Docking")
+                                .setContentText(msg)
+                                .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                                .setOnlyAlertOnce(true);
+                androidx.core.app.NotificationManagerCompat.from(context).notify(1002, builder.build());
+            } else {
+                Log.w(TAG, "Missing POST_NOTIFICATIONS permission for notifyDocking");
+            }
+        } catch (SecurityException se) {
+            Log.e(TAG, "SecurityException in notifyDocking: " + se.getMessage());
+        } catch (Exception e) {
+            Log.e(TAG, "Exception in notifyDocking: " + e.getMessage());
+        }
     }
 
     // Helper to notify UI about docking status directly
@@ -300,7 +314,15 @@ public class DockingManager {
         new Thread(() -> {
             ShimmerFileTransferClient client = new ShimmerFileTransferClient(context);
             client.transfer(shimmerMac);
+            // After file transfer, start S3 sync
+            startS3Sync();
         }).start();
+    }
+
+    // State 8: S3 File Sync
+    private void startS3Sync() {
+    Log.d(TAG, "Starting S3 file sync...");
+    SyncService.startSyncService(context);
     }
 
     private int queryDockStateFromShimmer(String macAddress) {
@@ -437,8 +459,16 @@ public class DockingManager {
     public void forceSilentState() {
         try {
             if (adapter != null && adapter.isDiscovering()) {
-                adapter.cancelDiscovery();
+                // Explicit permission check for BLUETOOTH_SCAN
+                if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_SCAN)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    adapter.cancelDiscovery();
+                } else {
+                    Log.w(TAG, "Missing BLUETOOTH_SCAN permission for cancelDiscovery in forceSilentState");
+                }
             }
+        } catch (SecurityException se) {
+            Log.e(TAG, "SecurityException in forceSilentState: " + se.getMessage());
         } catch (Exception ignored) {}
         // Safe unregister if registered
         safeUnregisterDeviceReceiver();
