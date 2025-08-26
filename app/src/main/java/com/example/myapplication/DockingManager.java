@@ -1,5 +1,8 @@
 package com.example.myapplication;
 
+import android.Manifest;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
@@ -8,6 +11,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.util.Log;
+
 
 import androidx.core.app.ActivityCompat;
 
@@ -30,6 +34,9 @@ public class DockingManager {
     private final BluetoothAdapter adapter;
     private DockingCallback callback;
 
+    // Track current Shimmer MAC being processed
+    private String shimmerMac;
+
     // Timing variables (can be set for testing)
     public long monitoringPhaseDurationMs = 1 * 60 * 1000; // 5 min
     public long scanPeriodMs = 20 * 1000; // 20 sec
@@ -45,8 +52,11 @@ public class DockingManager {
     private boolean isMonitoring = false;
     private long monitoringStartTime;
     private long lastSeenTime;
+    // Track found Shimmer devices (up to 2)
+    private final java.util.Set<String> shimmerMacs = new java.util.LinkedHashSet<>();
+
+    // Track if a Shimmer was found during scan
     private boolean shimmerFound = false;
-    private String shimmerMac = null;
 
     // Track device receiver registration to avoid IllegalArgumentException on unregister
     private boolean deviceReceiverRegistered = false;
@@ -132,9 +142,8 @@ public class DockingManager {
     // State 1: Initialization Scan
     private void startInitializationScan() {
         // Reset silent-state guard when a new cycle begins
-        silentActive = false;
-        shimmerFound = false;
-        shimmerMac = null;
+    silentActive = false;
+    shimmerMacs.clear();
         Log.d(TAG, "Initialization scan started.");
 
         // If Bluetooth is OFF, do not mark undocked; go to silent state and inform UI
@@ -167,8 +176,11 @@ public class DockingManager {
                 return;
             }
 
-            if (shimmerFound && shimmerMac != null) {
-                onShimmerFound(shimmerMac);
+            if (!shimmerMacs.isEmpty()) {
+                // Iterate over a copy to avoid concurrent modification
+                java.util.List<String> macsToProcess = new java.util.ArrayList<>(shimmerMacs);
+                java.util.Iterator<String> iterator = macsToProcess.iterator();
+                processNextShimmer(iterator);
             } else {
                 // Only mark undocked if Bluetooth is ON
                 if (adapter.isEnabled()) {
@@ -421,13 +433,160 @@ public class DockingManager {
                 return;
             }
             if (device != null && device.getName() != null && device.getName().toLowerCase().contains("shimmer")) {
-                shimmerFound = true;
-                shimmerMac = device.getAddress();
-                lastSeenTime = System.currentTimeMillis();
-                Log.d(TAG, "Found Shimmer: " + shimmerMac);
+                String mac = device.getAddress();
+                // During initialization scan, collect up to 2 Shimmers
+                if (isMonitoring) {
+                    // During round robin, only update for the current shimmerMac
+                    if (shimmerMac != null && mac.equals(shimmerMac)) {
+                        lastSeenTime = System.currentTimeMillis();
+                        shimmerFound = true;
+                        Log.d(TAG, "Found monitored Shimmer: " + mac);
+                    }
+                } else {
+                    if (shimmerMacs.size() < 2 && !shimmerMacs.contains(mac)) {
+                        shimmerMacs.add(mac);
+                        Log.d(TAG, "Found Shimmer: " + mac);
+                    }
+                }
             }
         }
     };
+
+    // Round robin: process each shimmer sequentially
+    private void processNextShimmer(java.util.Iterator<String> iterator) {
+        if (!iterator.hasNext()) {
+            // All shimmers processed, round robin naturally ends
+            Log.d(TAG, "Round robin completed. No more shimmers to process.");
+            return;
+        }
+        String mac = iterator.next();
+        processShimmer(mac, () -> processNextShimmer(iterator));
+    }
+
+    // For each shimmer: docking, transfer, sync, then callback to next
+    private void processShimmer(String mac, Runnable onComplete) {
+        Log.d(TAG, "Round robin: processing Shimmer " + mac);
+        // Docking, transfer, sync
+        startPeriodicMonitoringRoundRobin(mac, () -> {
+            // Remove MAC from shimmerMacs in main thread after all steps complete
+            synchronized (shimmerMacs) {
+                shimmerMacs.remove(mac);
+            }
+            if (onComplete != null) onComplete.run();
+        });
+    }
+
+    // Modified monitoring for round robin: after done, call onComplete
+    private void startPeriodicMonitoringRoundRobin(String mac, Runnable onComplete) {
+        isMonitoring = true;
+        monitoringStartTime = System.currentTimeMillis();
+        lastSeenTime = System.currentTimeMillis();
+        shimmerMac = mac;
+        Log.d(TAG, "Periodic monitoring (round robin) started for MAC: " + mac);
+        runPeriodicScanRoundRobin(mac, onComplete);
+    }
+
+    // Periodic scan loop for round robin
+    private void runPeriodicScanRoundRobin(String mac, Runnable onComplete) {
+        if (!isMonitoring) return;
+        long elapsed = System.currentTimeMillis() - monitoringStartTime;
+        if (elapsed >= monitoringPhaseDurationMs) {
+            // Monitoring phase complete, proceed to dock/transfer/sync
+            isMonitoring = false;
+            int dockStatus = queryDockStateFromShimmer(mac);
+            handleDockStateResponseRoundRobin(dockStatus, mac, onComplete);
+            return;
+        }
+
+        // If Bluetooth is OFF, do not mark undocked; go to silent state and inform UI
+        if (adapter == null || !adapter.isEnabled()) {
+            handleBluetoothOffAndSilent("periodic scan start (round robin)");
+            return;
+        }
+
+        if (ActivityCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "Missing BLUETOOTH_SCAN permission");
+            return;
+        }
+        try {
+            if (adapter.isDiscovering()) adapter.cancelDiscovery();
+            shimmerFound = false;
+            adapter.startDiscovery();
+            // Ensure single registration
+            registerDeviceReceiverIfNeeded();
+        } catch (SecurityException e) {
+            Log.e(TAG, "Bluetooth scan failed due to missing permission", e);
+            return;
+        }
+
+        handler.postDelayed(() -> {
+            try { adapter.cancelDiscovery(); } catch (Exception ignored) {}
+            safeUnregisterDeviceReceiver();
+
+            // If Bluetooth turned OFF during scan window, do not mark undocked
+            if (adapter == null || !adapter.isEnabled()) {
+                handleBluetoothOffAndSilent("periodic scan end (round robin)");
+                return;
+            }
+
+            // Check undocked condition when BT is ON
+            if (!shimmerFound && (System.currentTimeMillis() - lastSeenTime) > undockedTimeoutMs) {
+                // Only mark undocked if Bluetooth is still ON
+                if (adapter.isEnabled()) {
+                    isMonitoring = false;
+                    callback.onUndocked();
+                } else {
+                    sendDockingStatus("Bluetooth is off. Entering silent state (15 min)...");
+                }
+                enterSilentState();
+                if (onComplete != null) onComplete.run();
+                return;
+            }
+            // Schedule next scan
+            runPeriodicScanRoundRobin(mac, onComplete);
+        }, scanPeriodMs);
+    }
+
+    // Modified response handler for round robin
+    private void handleDockStateResponseRoundRobin(int status, String mac, Runnable onComplete) {
+        if (status < 0) {
+            handleBluetoothOffAndSilent("direct query response");
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+        if (status == 0) {
+            Log.d(TAG, "Shimmer is undocked (round robin).");
+            callback.onUndocked();
+            enterSilentState();
+            if (onComplete != null) onComplete.run();
+        } else if (status == 1) {
+            Log.d(TAG, "Shimmer is docked (round robin).");
+            callback.onDocked();
+            callback.onFileTransferStart();
+            startFileTransferRoundRobin(mac, onComplete);
+        }
+    }
+
+    // Modified file transfer for round robin
+    private void startFileTransferRoundRobin(String mac, Runnable onComplete) {
+        Log.d(TAG, "Starting file transfer (round robin)...");
+        new Thread(() -> {
+            ShimmerFileTransferClient client = new ShimmerFileTransferClient(context);
+            client.transfer(mac);
+            // After file transfer, start S3 sync
+            startS3SyncRoundRobin(onComplete);
+        }).start();
+    }
+
+    // Modified S3 sync for round robin
+    private void startS3SyncRoundRobin(Runnable onComplete) {
+        Log.d(TAG, "Starting S3 file sync (round robin)...");
+        SyncService.startSyncService(context);
+        // Simulate sync completion after delay (replace with broadcast/callback if needed)
+        handler.postDelayed(() -> {
+            if (onComplete != null) onComplete.run();
+        }, 3000); // 3s delay for demo
+    }
 
     // Safely unregister the device receiver if it was registered
     private void safeUnregisterDeviceReceiver() {
