@@ -337,20 +337,22 @@ public class ScanningService extends Service {
                 listIntent.setPackage(getApplicationContext().getPackageName());
                 sendBroadcast(listIntent);
 
-                // Cancel ongoing Bluetooth discovery if still running.
-                if (bluetoothAdapter.isDiscovering()) {
-                    bluetoothAdapter.cancelDiscovery();
-                    Log.d(TAG, "Bluetooth discovery cancelled after device found.");
+                // Only stop scanning after two unique Shimmer devices are found
+                if (foundDevices.size() >= 2) {
+                    if (bluetoothAdapter.isDiscovering()) {
+                        bluetoothAdapter.cancelDiscovery();
+                        Log.d(TAG, "Bluetooth discovery cancelled after two Shimmer devices found.");
+                    }
+                    // Stop the scanning timer immediately.
+                    timerHandler.removeCallbacksAndMessages(null);
+                    // Broadcast device info via ACTION_TIMER_UPDATE.
+                    Intent infoIntent = new Intent(ACTION_TIMER_UPDATE);
+                    infoIntent.putExtra("device_info", deviceInfo);
+                    infoIntent.setPackage(getApplicationContext().getPackageName());
+                    sendBroadcast(infoIntent);
+                    // Proceed to finish the scan process.
+                    onScanFinished();
                 }
-                // Stop the scanning timer immediately.
-                timerHandler.removeCallbacksAndMessages(null);
-                // Broadcast device info via ACTION_TIMER_UPDATE.
-                Intent infoIntent = new Intent(ACTION_TIMER_UPDATE);
-                infoIntent.putExtra("device_info", deviceInfo);
-                infoIntent.setPackage(getApplicationContext().getPackageName());
-                sendBroadcast(infoIntent);
-                // Proceed to finish the scan process.
-                onScanFinished();
             }
         }
     }
@@ -380,17 +382,17 @@ public class ScanningService extends Service {
 
         // Adaptive logic:
         if (!isExtendedSearch) {  // Initial scan branch.
-            if (count == 0) {
-                Log.d(TAG, "No devices found in initial scan. Starting extended search.");
+            if (count < 2) {
+                Log.d(TAG, "Less than 2 devices found in initial scan. Starting extended search.");
                 startExtendedSearch();
             } else {
-                Log.d(TAG, "Devices found in initial scan. Disabling Bluetooth and sleeping for 30 minutes.");
+                Log.d(TAG, "2 or more devices found in initial scan. Disabling Bluetooth and sleeping for 30 minutes.");
                 disableBluetooth();
                 sleepThenRestart(SLEEP_30_MIN_MS);
             }
         } else {  // Extended Search branch.
-            if (count > 0) {
-                Log.d(TAG, "Device found during extended search. Disabling Bluetooth and sleeping for 30 minutes.");
+            if (count >= 2) {
+                Log.d(TAG, "2 or more devices found during extended search. Disabling Bluetooth and sleeping for 30 minutes.");
                 disableBluetooth();
                 sleepThenRestart(SLEEP_30_MIN_MS);
             } else {
