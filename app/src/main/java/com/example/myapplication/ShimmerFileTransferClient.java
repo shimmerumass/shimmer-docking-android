@@ -257,6 +257,17 @@ public class ShimmerFileTransferClient {
                 int filenameLen = in.read();
                 byte[] filenameBytes = readExact(in, filenameLen);
                 String relativeFilename = new String(filenameBytes);
+                // Minimal tag extraction from filename
+                String experimentTag = null, shimmerIDTag = null;
+                String[] filenameParts = relativeFilename.split("/");
+                for (String part : filenameParts) {
+                    if (part.startsWith("FullC_")) experimentTag = part;
+                    if (part.startsWith("Shimmer_")) shimmerIDTag = part;
+                }
+                java.util.Map<String, String> tags = new java.util.HashMap<>();
+                if (experimentTag != null) tags.put("experiment", experimentTag);
+                if (shimmerIDTag != null) tags.put("shimmerID", shimmerIDTag);
+                Log.d(SYNC_TAG, "EXTRACTED TAGS FROM FILENAME: " + tags);
                 byte[] totalSizeBytes = readExact(in, 4);
                 int totalFileSize = ((totalSizeBytes[3] & 0xFF) << 24) |
                         ((totalSizeBytes[2] & 0xFF) << 16) |
@@ -299,7 +310,10 @@ public class ShimmerFileTransferClient {
                 if (phoneMac == null || phoneMac.isEmpty()) phoneMac = "user";
                 String timestamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
                 String baseName = new File(relativeFilename).getName();
-                String newFilename = phoneMac + "_" + timestamp + "_" + baseName + ".txt";
+                // Output filename: <phoneMac>__<timestamp>__<experimentName>__<shimmerID>__<baseName>.txt
+                String experimentName = experimentTag != null ? experimentTag : "";
+                String shimmerID = shimmerIDTag != null ? shimmerIDTag : "";
+                String newFilename = phoneMac + "__" + timestamp + "__" + experimentName + "__" + shimmerID + "__" + baseName + ".txt";
                 File dataDir = new File(context.getFilesDir(), "data");
                 if (!dataDir.exists()) dataDir.mkdirs();
                 File outputFile = new File(dataDir, newFilename);
@@ -554,11 +568,16 @@ public class ShimmerFileTransferClient {
                 socket = null;
             }
 
-            // Only broadcast TRANSFER_DONE if everything actually succeeded
+            // Only broadcast TRANSFER_DONE and upload to S3 if everything actually succeeded
             if (allFilesTransferred) {
                 Intent doneIntent = new Intent("com.example.myapplication.TRANSFER_DONE");
                 doneIntent.setPackage(context.getPackageName());
                 context.sendBroadcast(doneIntent);
+                // Upload all unsynced files for this Shimmer
+                List<File> unsyncedFiles = getLocalUnsyncedFiles();
+                for (File file : unsyncedFiles) {
+                    uploadFileToS3(file);
+                }
             }
         }
     }

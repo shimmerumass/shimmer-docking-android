@@ -434,18 +434,18 @@ public class DockingManager {
             }
             if (device != null && device.getName() != null && device.getName().toLowerCase().contains("shimmer")) {
                 String mac = device.getAddress();
-                // During initialization scan, collect up to 2 Shimmers
-                if (isMonitoring) {
+                // Only allow new Shimmer additions during initialization scan (not during round robin)
+                if (!isMonitoring) {
+                    if (shimmerMacs.size() < 2 && !shimmerMacs.contains(mac)) {
+                        shimmerMacs.add(mac);
+                        Log.d(TAG, "Found Shimmer: " + mac);
+                    }
+                } else {
                     // During round robin, only update for the current shimmerMac
                     if (shimmerMac != null && mac.equals(shimmerMac)) {
                         lastSeenTime = System.currentTimeMillis();
                         shimmerFound = true;
                         Log.d(TAG, "Found monitored Shimmer: " + mac);
-                    }
-                } else {
-                    if (shimmerMacs.size() < 2 && !shimmerMacs.contains(mac)) {
-                        shimmerMacs.add(mac);
-                        Log.d(TAG, "Found Shimmer: " + mac);
                     }
                 }
             }
