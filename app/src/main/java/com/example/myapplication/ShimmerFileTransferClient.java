@@ -322,8 +322,8 @@ public class ShimmerFileTransferClient {
                 File debugFile = new File(context.getFilesDir(), "debug_log.txt");
                 boolean transferSuccess = false; // Track transfer status
 
-                try (FileWriter textWriter = new FileWriter(outputFile);
-                     FileWriter debugWriter = new FileWriter(debugFile, true)) {
+             try (java.io.FileOutputStream binaryWriter = new java.io.FileOutputStream(outputFile);
+                 FileWriter debugWriter = new FileWriter(debugFile, true)) {
 
                     Log.d(TAG, "File created successfully: " + outputFile.getAbsolutePath());
                     Log.d(TAG, "Receiving chunks...");
@@ -372,14 +372,8 @@ public class ShimmerFileTransferClient {
                                    ", Total bytes (raw bytes): " + String.format("%02X %02X", totalBytes[0], totalBytes[1]) +
                                    ", Chunk size: " + chunkSizeForThisChunk);
 
-                            // Write ASCII-decoded data to the ASCII file
-                            for (byte b : chunkData) {
-                                if (b >= 32 && b <= 126) { // Printable ASCII range
-                                    textWriter.write((char) b); // Write as text
-                                } else {
-                                    textWriter.write("."); // Replace non-printable characters with '.'
-                                }
-                            }
+                            // Write raw binary data to the output file
+                            binaryWriter.write(chunkData);
 
                             // Write raw hexadecimal data to the debug file with header
                             StringBuilder hexLine = new StringBuilder();
@@ -575,7 +569,19 @@ public class ShimmerFileTransferClient {
                 context.sendBroadcast(doneIntent);
                 // Upload all unsynced files for this Shimmer
                 List<File> unsyncedFiles = getLocalUnsyncedFiles();
+                android.app.NotificationManager notificationManager = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+                String channelId = "S3UploadChannel";
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    android.app.NotificationChannel channel = new android.app.NotificationChannel(channelId, "S3 Uploads", android.app.NotificationManager.IMPORTANCE_DEFAULT);
+                    notificationManager.createNotificationChannel(channel);
+                }
                 for (File file : unsyncedFiles) {
+                    androidx.core.app.NotificationCompat.Builder builder = new androidx.core.app.NotificationCompat.Builder(context, channelId)
+                        .setContentTitle("Uploading to S3")
+                        .setContentText(file.getName())
+                        .setSmallIcon(android.R.drawable.stat_sys_upload)
+                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT);
+                    notificationManager.notify(file.getName().hashCode(), builder.build());
                     uploadFileToS3(file);
                 }
             }
