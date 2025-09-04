@@ -419,7 +419,9 @@ public class DockingManager {
             return 0;
         } finally {
             if (socket != null) {
-                try { socket.close(); } catch (Exception ignored) {}
+                try { socket.close();
+                Log.d(TAG, "Socket closed");
+                } catch (Exception ignored) {}
             }
         }
     }
