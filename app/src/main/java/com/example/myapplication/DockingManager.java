@@ -1,23 +1,25 @@
 package com.example.myapplication;
 
-import android.Manifest;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
+
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.util.Log;
 
-
 import androidx.core.app.ActivityCompat;
+
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 
 public class DockingManager {
@@ -40,9 +42,10 @@ public class DockingManager {
     // Timing variables (can be set for testing)
     public long monitoringPhaseDurationMs = 1 * 60 * 1000; // 5 min
     public long scanPeriodMs = 20 * 1000; // 20 sec
-    public long scanDurationMs = 10 * 1000; // 10 sec
+    public long scanDurationMs = 30 * 1000; // 30 sec
     public long undockedTimeoutMs = 60 * 1000; // 1 min
-    public long silentStateDurationMs = 1 * 60 * 1000; // 15 min
+    public long silentStateDurationMs = 60 * 1000; // 15 min
+    public long waitBeforeTransferDuration = 60 * 1000; // wait between dock query and transfer connect
 
     // Night mode window (settable for testing)
     public int nightStartHour = 20; // 8 PM
@@ -54,9 +57,16 @@ public class DockingManager {
     private long lastSeenTime;
     // Track found Shimmer devices (up to 2)
     private final java.util.Set<String> shimmerMacs = new java.util.LinkedHashSet<>();
+    
+    // Track successfully completed Shimmers
+    private final java.util.Set<String> completedShimmers = new java.util.HashSet<>();
 
     // Track if a Shimmer was found during scan
     private boolean shimmerFound = false;
+
+    // Track retry counts per Shimmer MAC
+    private final java.util.Map<String, Integer> silentRetryCounts = new java.util.HashMap<>();
+    private static final int MAX_RETRIES = 3;
 
     // Track device receiver registration to avoid IllegalArgumentException on unregister
     private boolean deviceReceiverRegistered = false;
@@ -70,12 +80,85 @@ public class DockingManager {
     // Prevent duplicate protocol runs; set true on start, reset only after silent state ends
     private final java.util.concurrent.atomic.AtomicBoolean protocolActive = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+
+    private static final int MAX_SILENT_RETRIES = 2; // Maximum retries for silent state
+    
+    // Executor for handling background tasks
+    private final Executor executor = Executors.newSingleThreadExecutor();
+
     public DockingManager(Context ctx, DockingCallback cb) {
         this.context = ctx;
         this.callback = cb;
         this.adapter = BluetoothAdapter.getDefaultAdapter();
         Log.d(TAG, "DockingManager constructed");
     }
+
+    // One-shot receivers to gate transfer advancement in round-robin and single-device flows
+    private BroadcastReceiver transferDoneReceiver;
+    private BroadcastReceiver transferFailedReceiver;
+    private boolean transferReceiversRegistered = false;
+
+private void registerTransferReceivers(Runnable onSuccess, Runnable onFailure) {
+    if (transferReceiversRegistered) {
+        unregisterTransferReceivers();
+    }
+
+    transferDoneReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context ctx, Intent intent) {
+            try { unregisterTransferReceivers(); } catch (Exception ignored) {}
+            Log.d(TAG, "Transfer DONE broadcast received: " + intent.getAction());
+            if (onSuccess != null) onSuccess.run();
+        }
+    };
+    transferFailedReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context ctx, Intent intent) {
+            try { unregisterTransferReceivers(); } catch (Exception ignored) {}
+            Log.d(TAG, "Transfer FAILED broadcast received: " + intent.getAction());
+            if (onFailure != null) onFailure.run();
+        }
+    };
+
+    try {
+        // Listen to the same actions DockingService registers
+        IntentFilter doneFilter = new IntentFilter(DockingService.ACTION_TRANSFER_DONE);
+        IntentFilter failedFilter = new IntentFilter(DockingService.ACTION_TRANSFER_FAILED);
+
+       context.registerReceiver(transferDoneReceiver, doneFilter, Context.RECEIVER_NOT_EXPORTED);
+       context.registerReceiver(transferFailedReceiver, failedFilter, Context.RECEIVER_NOT_EXPORTED);
+
+        transferReceiversRegistered = true;
+    } catch (Exception e) {
+        Log.e(TAG, "Failed to register transfer receivers: " + e.getMessage());
+        transferReceiversRegistered = false;
+    }
+}
+
+
+
+private void unregisterTransferReceivers() {
+        if (!transferReceiversRegistered) return;
+        try { context.unregisterReceiver(transferDoneReceiver); } catch (Exception ignored) {}
+        try { context.unregisterReceiver(transferFailedReceiver); } catch (Exception ignored) {}
+        transferReceiversRegistered = false;
+    }
+    
+    private void processShimmerQueue() {
+        if (shimmerMacs.isEmpty()) {
+            Log.d(TAG, "All Shimmers processed. Protocol complete.");
+            protocolActive.set(false);
+            return;
+        }
+
+        // Get next Shimmer from queue
+        String nextMac = shimmerMacs.iterator().next();
+        Log.d(TAG, "Round robin: processing Shimmer " + nextMac);
+        shimmerMac = nextMac;
+        
+        // Start periodic monitoring for this Shimmer with callback
+        startPeriodicMonitoringRoundRobin(nextMac, this::processShimmerQueue);
+    }
+
+    // Constructor continues below
 
     // Ensure the shared notification channel exists for Docking updates
     private void ensureDockingChannel() {
@@ -142,9 +225,9 @@ public class DockingManager {
     // State 1: Initialization Scan
     private void startInitializationScan() {
         // Reset silent-state guard when a new cycle begins
-    silentActive = false;
+        silentActive = false;
     shimmerMacs.clear();
-        Log.d(TAG, "Initialization scan started.");
+    Log.d(TAG, "Initialization scan started.");
 
         // If Bluetooth is OFF, do not mark undocked; go to silent state and inform UI
         if (adapter == null || !adapter.isEnabled()) {
@@ -272,6 +355,8 @@ public class DockingManager {
         if (silentActive) return; // idempotent guard
         silentActive = true;
         Log.d(TAG, "Entering silent state...");
+    // Clean up any pending transfer receivers to avoid leaks
+    unregisterTransferReceivers();
         // Cancel any pending scan callbacks to avoid re-entry
         handler.removeCallbacksAndMessages(null);
         // Make sure monitoring loop halts
@@ -281,11 +366,73 @@ public class DockingManager {
         // Do NOT toggle Bluetooth here; user may turn it back on. We only pause.
         // Schedule resume after the silent window
         handler.postDelayed(() -> {
-            // Release single-flight guard only after silent ends
-            protocolActive.set(false);
             silentActive = false;
-            startInitializationScan();
+        // Check if we have a current Shimmer to retry
+        if (shimmerMac != null) {
+            // Ensure retry count exists for current Shimmer
+            if (!silentRetryCounts.containsKey(shimmerMac)) {
+                silentRetryCounts.put(shimmerMac, 0);
+            }
+            handleSilentStateRetry();
+        } else if (!shimmerMacs.isEmpty()) {
+            // No current Shimmer but queue not empty - continue processing
+            processShimmerQueue();
+        } else {
+            // Queue is truly empty - protocol complete
+            Log.d(TAG, "No Shimmers in queue. Protocol complete.");
+            protocolActive.set(false);
+        }
         }, silentStateDurationMs);
+    }
+
+    // NEW: Handle retry logic after silent state
+    private void handleSilentStateRetry() {
+        if (shimmerMac == null) {
+            startInitializationScan();
+            return;
+        }
+
+        int retryCount = silentRetryCounts.getOrDefault(shimmerMac, 0);
+        if (retryCount >= MAX_SILENT_RETRIES) {
+            Log.d(TAG, "Max silent retries (" + MAX_SILENT_RETRIES + ") reached for " + shimmerMac + ". Moving to next Shimmer but keeping in queue.");
+            
+            // Reset retry count for next round
+            silentRetryCounts.put(shimmerMac, 0);
+            
+            // Get next Shimmer to process (keeping current one in queue)
+            String currentMac = shimmerMac;
+            shimmerMac = null;
+            
+            // Find next MAC after current one
+            boolean foundCurrent = false;
+            String nextMac = null;
+            
+            for (String mac : shimmerMacs) {
+                if (foundCurrent) {
+                    nextMac = mac;
+                    break;
+                }
+                if (mac.equals(currentMac)) {
+                    foundCurrent = true;
+                }
+            }
+            
+            // If no next MAC, go back to first one
+            if (nextMac == null && !shimmerMacs.isEmpty()) {
+                nextMac = shimmerMacs.iterator().next();
+            }
+            
+            if (nextMac != null) {
+                processShimmer(nextMac, null);
+            } else {
+                Log.d(TAG, "No Shimmers in queue. Protocol complete.");
+                protocolActive.set(false);
+            }
+        } else {
+            Log.d(TAG, "Retrying " + shimmerMac + " after silent state (attempt " + (retryCount + 1) + "/" + MAX_SILENT_RETRIES + ")");
+            silentRetryCounts.put(shimmerMac, retryCount + 1);
+            startPeriodicMonitoringRoundRobin(shimmerMac, this::processShimmerQueue);
+        }
     }
 
     // State 5: Direct Query and Connection
@@ -316,18 +463,36 @@ public class DockingManager {
             Log.d(TAG, "Shimmer is docked.");
             callback.onDocked();
             callback.onFileTransferStart();
-            startFileTransfer();
+            // Stop discovery if active and wait briefly before opening RFCOMM for transfer
+//            try { if (adapter != null && adapter.isDiscovering()) adapter.cancelDiscovery(); } catch (Exception ignored) {}
+            Log.d(TAG, "Waiting " + waitBeforeTransferDuration + "ms before starting file transfer...");
+            handler.postDelayed(this::startFileTransfer, waitBeforeTransferDuration);
         }
     }
 
     // State 7: File Transfer
     private void startFileTransfer() {
         Log.d(TAG, "Starting file transfer...");
+        // Gate S3 sync on explicit success broadcast; enter silent on failure
+        registerTransferReceivers(
+            () -> {
+                Log.d(TAG, "Non-RR transfer succeeded; starting S3 sync.");
+                startS3Sync();
+            },
+            () -> {
+                Log.d(TAG, "Non-RR transfer failed; entering silent state.");
+                enterSilentState();
+            }
+        );
         new Thread(() -> {
             ShimmerFileTransferClient client = new ShimmerFileTransferClient(context);
-            client.transfer(shimmerMac);
-            // After file transfer, start S3 sync
-            startS3Sync();
+            try {
+                client.transfer(shimmerMac);
+            } catch (Exception e) {
+                Log.e(TAG, "Transfer threw exception: " + e.getMessage());
+                // Failure path is handled by broadcast as well, but ensure silent as fallback
+                enterSilentState();
+            }
         }).start();
     }
 
@@ -356,6 +521,11 @@ public class DockingManager {
                 java.util.UUID.fromString("00001101-0000-1000-8000-00805F9B34FB"));
             adapter.cancelDiscovery();
 
+            // Initialize retry count for this Shimmer if not exists
+            if (!silentRetryCounts.containsKey(macAddress)) {
+                silentRetryCounts.put(macAddress, 0);
+            }
+
             // Retry connection up to 3 times
             boolean connected = false;
             for (int attempts = 1; attempts <= 3 && !connected; attempts++) {
@@ -371,6 +541,9 @@ public class DockingManager {
             }
             if (!connected) {
                 Log.e(TAG, "Unable to connect to Shimmer after 3 retries");
+                // Track failure in retries map
+                int currentRetries = silentRetryCounts.getOrDefault(macAddress, 0);
+                silentRetryCounts.put(macAddress, currentRetries + 1);
                 return 0;
             }
             Log.d(TAG, "Connected to Shimmer: " + macAddress);
@@ -395,6 +568,9 @@ public class DockingManager {
                 firstByte = in.read();
                 if (firstByte == -1) {
                     Log.e(TAG, "Stream ended before receiving response");
+                    // Track failure in retries map
+                    int currentRetries = silentRetryCounts.getOrDefault(macAddress, 0);
+                    silentRetryCounts.put(macAddress, currentRetries + 1);
                     return 0;
                 }
             } while (firstByte == 0xFF);
@@ -420,8 +596,11 @@ public class DockingManager {
         } finally {
             if (socket != null) {
                 try { socket.close();
-                Log.d(TAG, "Socket closed");
-                } catch (Exception ignored) {}
+                    Log.d(TAG, "Bluetooth socket closed");
+                
+                } catch (Exception ignored) {
+                    Log.e(TAG, "Error closing Bluetooth socket", ignored);
+                }
             }
         }
     }
@@ -436,6 +615,13 @@ public class DockingManager {
             }
             if (device != null && device.getName() != null && device.getName().toLowerCase().contains("shimmer")) {
                 String mac = device.getAddress();
+                
+                // PREVENT re-adding completed Shimmers
+                if (completedShimmers.contains(mac)) {
+                    Log.d(TAG, "Ignoring already completed Shimmer: " + mac);
+                    return;
+                }
+                
                 // Only allow new Shimmer additions during initialization scan (not during round robin)
                 if (!isMonitoring) {
                     if (shimmerMacs.size() < 2 && !shimmerMacs.contains(mac)) {
@@ -465,15 +651,14 @@ public class DockingManager {
         processShimmer(mac, () -> processNextShimmer(iterator));
     }
 
-    // For each shimmer: docking, transfer, sync, then callback to next
+    // For each shimmer: docking, transfer, sync, then callback to next - MODIFIED
     private void processShimmer(String mac, Runnable onComplete) {
         Log.d(TAG, "Round robin: processing Shimmer " + mac);
+        // Reset retry count for this Shimmer
+        silentRetryCounts.put(mac, 0);
         // Docking, transfer, sync
         startPeriodicMonitoringRoundRobin(mac, () -> {
-            // Remove MAC from shimmerMacs in main thread after all steps complete
-            synchronized (shimmerMacs) {
-                shimmerMacs.remove(mac);
-            }
+            // MAC removal is now handled in retry logic, not here
             if (onComplete != null) onComplete.run();
         });
     }
@@ -541,7 +726,7 @@ public class DockingManager {
                     sendDockingStatus("Bluetooth is off. Entering silent state (15 min)...");
                 }
                 enterSilentState();
-                if (onComplete != null) onComplete.run();
+                // Don't call onComplete here - let retry logic handle it
                 return;
             }
             // Schedule next scan
@@ -549,34 +734,64 @@ public class DockingManager {
         }, scanPeriodMs);
     }
 
-    // Modified response handler for round robin
+    // Modified response handler for round robin - MODIFIED
     private void handleDockStateResponseRoundRobin(int status, String mac, Runnable onComplete) {
         if (status < 0) {
             handleBluetoothOffAndSilent("direct query response");
-            if (onComplete != null) onComplete.run();
+            // Don't call onComplete here - let retry logic handle it
             return;
         }
         if (status == 0) {
             Log.d(TAG, "Shimmer is undocked (round robin).");
             callback.onUndocked();
             enterSilentState();
-            if (onComplete != null) onComplete.run();
+            // Don't call onComplete here - let retry logic handle it
         } else if (status == 1) {
             Log.d(TAG, "Shimmer is docked (round robin).");
             callback.onDocked();
             callback.onFileTransferStart();
-            startFileTransferRoundRobin(mac, onComplete);
+            // Stop discovery if active and wait briefly before opening RFCOMM for transfer
+//            try { if (adapter != null && adapter.isDiscovering()) adapter.cancelDiscovery(); } catch (Exception ignored) {}
+            Log.d(TAG, "Waiting " + waitBeforeTransferDuration + "ms before starting file transfer (round robin)...");
+            handler.postDelayed(() -> startFileTransferRoundRobin(mac, onComplete), waitBeforeTransferDuration);
         }
     }
 
-    // Modified file transfer for round robin
+    // Modified file transfer for round robin - MODIFIED to only remove Shimmer after successful transfer
     private void startFileTransferRoundRobin(String mac, Runnable onComplete) {
         Log.d(TAG, "Starting file transfer (round robin)...");
+        // Register one-shot receivers before starting transfer
+        registerTransferReceivers(
+            () -> {
+                // Success: remove from queue, reset counters, then S3 and continue
+                Log.d(TAG, "Transfer success for " + mac + "; removing from queue and starting S3 sync.");
+                synchronized (shimmerMacs) {
+                    shimmerMacs.remove(mac);
+                    completedShimmers.add(mac);
+                }
+                silentRetryCounts.remove(mac);
+                shimmerMac = null;
+
+                startS3SyncRoundRobin(() -> {
+                    processShimmerQueue();
+                });
+            },
+            () -> {
+                // Failure: enter silent; keep in queue; retry logic will handle rotation
+                Log.d(TAG, "Transfer failed for " + mac + "; entering silent state and keeping in queue.");
+                enterSilentState();
+            }
+        );
+
         new Thread(() -> {
             ShimmerFileTransferClient client = new ShimmerFileTransferClient(context);
-            client.transfer(mac);
-            // After file transfer, start S3 sync
-            startS3SyncRoundRobin(onComplete);
+            try {
+                client.transfer(mac);
+            } catch (Exception e) {
+                Log.d(TAG, "Transfer threw exception for " + mac + ": " + e.getMessage());
+                // Failure will also be broadcast by client; ensure silent as fallback
+                enterSilentState();
+            }
         }).start();
     }
 
@@ -584,9 +799,10 @@ public class DockingManager {
     private void startS3SyncRoundRobin(Runnable onComplete) {
         Log.d(TAG, "Starting S3 file sync (round robin)...");
         SyncService.startSyncService(context);
-        // Simulate sync completion after delay (replace with broadcast/callback if needed)
+        
+        // After sync delay, continue processing queue
         handler.postDelayed(() -> {
-            if (onComplete != null) onComplete.run();
+            processShimmerQueue();
         }, 3000); // 3s delay for demo
     }
 
@@ -655,7 +871,14 @@ public class DockingManager {
         }
         Log.d(TAG, "Starting night docking protocol...");
         // Ensure ScanningService is not running to avoid conflicting timers/UI
-        try { context.stopService(new Intent(context, ScanningService.class)); } catch (Exception ignored) {}
+        // try { context.stopService(new Intent(context, ScanningService.class)); } catch (Exception ignored) {}
+        
+        // Reset state for new protocol run
+        silentRetryCounts.clear();
+        Log.d(TAG, "Cleared silent retry counts.");
+        completedShimmers.clear();  // Clear completed Shimmers for new run
+        Log.d(TAG, "Cleared completed Shimmers.");
+        
         sendDockingStatus("Docking protocol started.");
         startInitializationScan();
     }

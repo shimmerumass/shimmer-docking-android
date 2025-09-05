@@ -413,11 +413,11 @@ public class MainActivity extends AppCompatActivity {
             Log.d("MainActivity", "Docking button pressed");
 
             // Stop ScanningService if running
-            if (isScanningServiceRunning()) {
-                Log.d("MainActivity", "Stopping ScanningService before starting DockingService");
-                Intent stopScanIntent = new Intent(this, ScanningService.class);
-                stopService(stopScanIntent);
-            }
+            // if (isScanningServiceRunning()) {
+            //     Log.d("MainActivity", "Stopping ScanningService before starting DockingService");
+            //     Intent stopScanIntent = new Intent(this, ScanningService.class);
+            //     stopService(stopScanIntent);
+            // }
 
             // Start DockingService
             Intent dockingIntent = new Intent(this, DockingService.class);

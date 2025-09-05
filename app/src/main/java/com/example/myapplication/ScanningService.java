@@ -604,10 +604,10 @@ public class ScanningService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         // If DockingService is running, do not run scanning to avoid conflicting timers/UI
-        if (isDockingServiceRunning()) {
-            stopSelf();
-            return START_NOT_STICKY;
-        }
+        // if (isDockingServiceRunning()) {
+        //     stopSelf();
+        //     return START_NOT_STICKY;
+        // }
         boolean reset = intent != null && intent.getBooleanExtra(EXTRA_RESET_PROTOCOL, false);
         if (reset) {
             try { if (currentSleepTimer != null) handler.removeCallbacks(currentSleepTimer); } catch (Exception ignored) {}
