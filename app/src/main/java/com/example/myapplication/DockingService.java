@@ -1,4 +1,25 @@
+
 package com.example.myapplication;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.bluetooth.BluetoothAdapter;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.os.Handler;
+import android.os.IBinder;
+import android.util.Log;
+
+import androidx.core.app.NotificationCompat;
+
+import java.util.Calendar;
+import java.util.concurrent.TimeUnit;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -23,6 +44,9 @@ import java.util.concurrent.TimeUnit;
 public class DockingService extends Service implements DockingManager.DockingCallback {
     private static final String CHANNEL_ID = "docking_channel";
     private static final int NOTIF_ID = 101;
+
+    // New: Action for forced protocol stop (from DockingEndReceiver)
+    public static final String ACTION_FORCE_STOP = "com.example.myapplication.FORCE_STOP_DOCKING";
 
     // Broadcasts
     public static final String ACTION_TRANSFER_DONE = "com.example.myapplication.TRANSFER_DONE";
@@ -108,12 +132,16 @@ public class DockingService extends Service implements DockingManager.DockingCal
 
         // Load latest window hours
         SharedPreferences prefs = getSharedPreferences("docking_prefs", MODE_PRIVATE);
-        int startHour = prefs.getInt("night_start_hour", 20);
-        int endHour = prefs.getInt("night_end_hour", 9);
+    int startHour = prefs.getInt("night_start_hour", 20);
+    int startMinute = prefs.getInt("night_start_minute", 0);
+    int endHour = prefs.getInt("night_end_hour", 9);
+    int endMinute = prefs.getInt("night_end_minute", 0);
 
-        dockingManager = new DockingManager(this, this);
-        dockingManager.nightStartHour = startHour;
-        dockingManager.nightEndHour = endHour;
+    dockingManager = new DockingManager(this, this);
+    dockingManager.nightStartHour = startHour;
+    dockingManager.nightStartMinute = startMinute;
+    dockingManager.nightEndHour = endHour;
+    dockingManager.nightEndMinute = endMinute;
 
         handler.post(() -> dockingManager.startNightDockingFlow());
 
@@ -121,6 +149,9 @@ public class DockingService extends Service implements DockingManager.DockingCal
         registerReceiver(transferDoneReceiver, new IntentFilter(ACTION_TRANSFER_DONE), Context.RECEIVER_NOT_EXPORTED);
         registerReceiver(transferFailedReceiver, new IntentFilter(ACTION_TRANSFER_FAILED), Context.RECEIVER_NOT_EXPORTED);
         registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), Context.RECEIVER_NOT_EXPORTED);
+
+        // Register receiver for forced protocol stop
+        registerReceiver(forceStopReceiver, new IntentFilter(ACTION_FORCE_STOP), Context.RECEIVER_NOT_EXPORTED);
     }
 
     @Override
@@ -136,6 +167,7 @@ public class DockingService extends Service implements DockingManager.DockingCal
         try { unregisterReceiver(transferDoneReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(transferFailedReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(btStateReceiver); } catch (Exception ignored) {}
+        try { unregisterReceiver(forceStopReceiver); } catch (Exception ignored) {}
         // connectivityReceiver registration removed; no unregister
 
         // Restart ScanningService
@@ -147,6 +179,17 @@ public class DockingService extends Service implements DockingManager.DockingCal
         }
         Log.d("DockingService", "DockingService destroyed, ScanningService restarted");
     }
+    // New: Receiver for forced protocol stop
+    private final BroadcastReceiver forceStopReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.w("DockingService", "Received FORCE_STOP_DOCKING. Cleaning up protocol...");
+            if (dockingManager != null) dockingManager.forceSilentState();
+            updateNotification("Docking protocol forcibly stopped.");
+            sendDockingStatus("Docking protocol forcibly stopped.");
+            stopSelf();
+        }
+    };
 
     @Override
     public IBinder onBind(Intent intent) { return null; }

@@ -65,6 +65,81 @@ public class MainActivity extends AppCompatActivity {
             Manifest.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE
     };
 
+    // --- Permission helpers ---
+    private boolean hasAllRuntimePermissions() {
+        for (String p : REQUIRED_PERMISSIONS) {
+            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) return false;
+        }
+        return true;
+    }
+
+    private List<String> getMissingRuntimePermissions() {
+        List<String> missing = new ArrayList<>();
+        for (String p : REQUIRED_PERMISSIONS) {
+            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) missing.add(p);
+        }
+        return missing;
+    }
+
+    private boolean canScheduleExactAlarms() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true; // Below 31 no special gate
+        android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        if (am == null) return false;
+        return am.canScheduleExactAlarms();
+    }
+
+    private String humanReadablePermission(String perm) {
+        switch (perm) {
+            case Manifest.permission.BLUETOOTH_CONNECT: return "Bluetooth Connect";
+            case Manifest.permission.BLUETOOTH_SCAN: return "Bluetooth Scan";
+            case Manifest.permission.ACCESS_FINE_LOCATION: return "Location";
+            case Manifest.permission.POST_NOTIFICATIONS: return "Notifications";
+            default: return perm;
+        }
+    }
+
+    private String buildMissingPermissionMessage() {
+        StringBuilder sb = new StringBuilder();
+        List<String> missing = getMissingRuntimePermissions();
+        if (!missing.isEmpty()) {
+            sb.append("Missing permissions:\n");
+            for (String m : missing) sb.append("• ").append(humanReadablePermission(m)).append('\n');
+            sb.append('\n');
+        }
+        if (!canScheduleExactAlarms()) {
+            sb.append("Exact alarm permission not granted (Needed for scheduled docking). Open system settings to allow \"Alarms & reminders\" for this app.\n\n");
+        }
+        sb.append("Please grant these to continue scanning and scheduling.");
+        return sb.toString();
+    }
+
+    private void openAppSettings() {
+        Intent intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+        intent.setData(android.net.Uri.fromParts("package", getPackageName(), null));
+        startActivity(intent);
+    }
+
+    private void openExactAlarmSettingsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !canScheduleExactAlarms()) {
+            Intent i = new Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
+            try { startActivity(i); } catch (Exception ignored) { openAppSettings(); }
+        }
+    }
+
+    private void showMissingPermissionPreRequestDialog(List<String> missing) {
+        if (missing == null || missing.isEmpty()) return;
+        StringBuilder msg = new StringBuilder("The app needs these permissions:\n\n");
+        for (String p : missing) msg.append("• ").append(humanReadablePermission(p)).append('\n');
+        msg.append("\nThey enable Bluetooth scanning and notifications.");
+        new AlertDialog.Builder(this)
+                .setTitle("Permissions Needed")
+                .setMessage(msg.toString())
+                .setPositiveButton("Continue", (d,w) -> ActivityCompat.requestPermissions(this, missing.toArray(new String[0]), PERMISSION_REQUEST_CODE))
+                .setNegativeButton("Exit", (d,w) -> finish())
+                .setCancelable(false)
+                .show();
+    }
+
     private TextView timerText;
     private TextView statusText;
     private ListView deviceListView;
@@ -349,14 +424,13 @@ public class MainActivity extends AppCompatActivity {
             registerReceiver(dockingStatusReceiver, new IntentFilter("com.example.myapplication.DOCKING_STATUS"));
         }
 
-        if (!hasPermissions()) {
-            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
-            return;
-        }
-        // Only start scanning if DockingService is NOT running
-        if (!isDockingServiceRunning()) {
-            startScanningService();
-        }
+        // Request only missing runtime permissions first
+        List<String> missingAtLaunch = getMissingRuntimePermissions();
+    if (!missingAtLaunch.isEmpty()) { showMissingPermissionPreRequestDialog(missingAtLaunch); return; }
+        // Prompt for special exact alarm separately (cannot be in normal request)
+        maybePromptExactAlarmPermission();
+        // if (!isDockingServiceRunning()) 
+        startScanningService();
 
         TextView userNameTextView = findViewById(R.id.user_name_text_view);
 
@@ -677,12 +751,16 @@ public class MainActivity extends AppCompatActivity {
         prefs.edit().putString("sync_display_list", arr.toString()).apply();
     }
 
-    private boolean hasPermissions() {
-        for (String permission : REQUIRED_PERMISSIONS) {
-            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED)
-                return false;
-        }
-        return true;
+    private boolean hasPermissions() { return hasAllRuntimePermissions(); }
+
+    private void maybePromptExactAlarmPermission() {
+        if (canScheduleExactAlarms()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Exact Alarm Permission")
+                .setMessage("Exact alarms are needed to auto-start the docking protocol. Open Settings and allow 'Alarms & reminders' for this app.")
+                .setPositiveButton("Settings", (d,w) -> openExactAlarmSettingsIfNeeded())
+                .setNegativeButton("Later", null)
+                .show();
     }
 
     private void startScanningService() {
@@ -693,6 +771,7 @@ public class MainActivity extends AppCompatActivity {
         Intent serviceIntent = new Intent(this, ScanningService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
+            // startService(serviceIntent);
         } else {
             startService(serviceIntent);
         }
@@ -730,7 +809,7 @@ public class MainActivity extends AppCompatActivity {
                     client.markFileAsSynced(f);
                 }
             }
-            // --- END OF MODIFIED LOGIC ---
+            // --- END OF MODIFIED LOGIC --- DockingScheduler
 
             // This check now correctly handles the case where all unsynced files
             // were corrected, leaving nothing to upload.
@@ -807,20 +886,20 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            boolean granted = true;
-            for (int result : grantResults) {
-                granted &= (result == PackageManager.PERMISSION_GRANTED);
-            }
-            if (granted) {
+            List<String> stillMissing = getMissingRuntimePermissions();
+            if (stillMissing.isEmpty()) {
                 startScanningService();
+                maybePromptExactAlarmPermission();
             } else {
-                new androidx.appcompat.app.AlertDialog.Builder(this)
-                        .setTitle("Permissions Required")
-                        .setMessage("Permissions are required for scanning. Please grant them to continue.")
-                        .setPositiveButton("Retry", (dialog, which) -> {
-                            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE);
-                        })
-                        .setNegativeButton("Exit", (dialog, which) -> finish())
+                StringBuilder msg = new StringBuilder("The following permissions are required:\n\n");
+                for (String p : stillMissing) msg.append("• ").append(humanReadablePermission(p)).append('\n');
+                msg.append("\nWithout them scanning cannot proceed.");
+                new AlertDialog.Builder(this)
+                        .setTitle("Permissions Needed")
+                        .setMessage(msg.toString())
+                        .setPositiveButton("Retry", (d,w) -> ActivityCompat.requestPermissions(this, stillMissing.toArray(new String[0]), PERMISSION_REQUEST_CODE))
+                        .setNeutralButton("App Settings", (d,w) -> openAppSettings())
+                        .setNegativeButton("Exit", (d,w) -> finish())
                         .setCancelable(false)
                         .show();
             }
@@ -939,13 +1018,19 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout startTimeLayout = new LinearLayout(this);
         startTimeLayout.setOrientation(LinearLayout.HORIZONTAL);
 
-        final NumberPicker startHourPicker = new NumberPicker(this);
+    final NumberPicker startHourPicker = new NumberPicker(this);
         startHourPicker.setMinValue(1);
         startHourPicker.setMaxValue(12);
         int startHour24Value = getDockingStartHour();
         int startHour12 = (startHour24Value == 0 || startHour24Value == 12) ? 12 : startHour24Value % 12;
         startHourPicker.setValue(startHour12);
         startTimeLayout.addView(startHourPicker);
+
+    final NumberPicker startMinutePicker = new NumberPicker(this);
+    startMinutePicker.setMinValue(0);
+    startMinutePicker.setMaxValue(59);
+    startMinutePicker.setValue(getDockingStartMinute());
+    startTimeLayout.addView(startMinutePicker);
 
         final NumberPicker startAmPmPicker = new NumberPicker(this);
         startAmPmPicker.setMinValue(0);
@@ -964,13 +1049,19 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout endTimeLayout = new LinearLayout(this);
         endTimeLayout.setOrientation(LinearLayout.HORIZONTAL);
 
-        final NumberPicker endHourPicker = new NumberPicker(this);
+    final NumberPicker endHourPicker = new NumberPicker(this);
         endHourPicker.setMinValue(1);
         endHourPicker.setMaxValue(12);
         int endHour24Value = getDockingEndHour();
         int endHour12 = (endHour24Value == 0 || endHour24Value == 12) ? 12 : endHour24Value % 12;
         endHourPicker.setValue(endHour12);
         endTimeLayout.addView(endHourPicker);
+
+    final NumberPicker endMinutePicker = new NumberPicker(this);
+    endMinutePicker.setMinValue(0);
+    endMinutePicker.setMaxValue(59);
+    endMinutePicker.setValue(getDockingEndMinute());
+    endTimeLayout.addView(endMinutePicker);
 
         final NumberPicker endAmPmPicker = new NumberPicker(this);
         endAmPmPicker.setMinValue(0);
@@ -991,11 +1082,14 @@ public class MainActivity extends AppCompatActivity {
                     int startAmPm = startAmPmPicker.getValue();
                     int endHour = endHourPicker.getValue();
                     int endAmPm = endAmPmPicker.getValue();
+                    int startMinute = startMinutePicker.getValue();
+                    int endMinute = endMinutePicker.getValue();
                     // Compute 24-hour format directly
                     int startHour24 = (startHour % 12) + (startAmPm == 1 ? 12 : 0);
                     int endHour24 = (endHour % 12) + (endAmPm == 1 ? 12 : 0);
-                    setDockingHours(startHour24, endHour24);
+                    setDockingHours(startHour24, startMinute, endHour24, endMinute);
                     updateDockingHoursText();
+                    DockingScheduler.scheduleDailyDocking(this);
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -1003,26 +1097,30 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateDockingHoursText() {
         TextView dockingHoursText = findViewById(R.id.dockingHoursText);
-        int start = getDockingStartHour();
-        int end = getDockingEndHour();
-        dockingHoursText.setText(String.format("Docking hours: %02d:00 - %02d:00", start, end));
+        int sh = getDockingStartHour();
+        int sm = getDockingStartMinute();
+        int eh = getDockingEndHour();
+        int em = getDockingEndMinute();
+        dockingHoursText.setText(String.format("Docking window: %02d:%02d - %02d:%02d", sh, sm, eh, em));
     }
 
     private static final String PREFS_DOCKING = "docking_prefs";
     private static final String KEY_START_HOUR = "night_start_hour";
+    private static final String KEY_START_MIN = "night_start_minute";
     private static final String KEY_END_HOUR = "night_end_hour";
+    private static final String KEY_END_MIN = "night_end_minute";
 
-    private int getDockingStartHour() {
-        return getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE).getInt(KEY_START_HOUR, 20);
-    }
-    private int getDockingEndHour() {
-        return getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE).getInt(KEY_END_HOUR, 9);
-    }
-    private void setDockingHours(int start, int end) {
+    private int getDockingStartHour() { return getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE).getInt(KEY_START_HOUR, 20); }
+    private int getDockingStartMinute() { return getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE).getInt(KEY_START_MIN, 0); }
+    private int getDockingEndHour() { return getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE).getInt(KEY_END_HOUR, 9); }
+    private int getDockingEndMinute() { return getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE).getInt(KEY_END_MIN, 0); }
+    private void setDockingHours(int sh, int sm, int eh, int em) {
         getSharedPreferences(PREFS_DOCKING, MODE_PRIVATE)
                 .edit()
-                .putInt(KEY_START_HOUR, start)
-                .putInt(KEY_END_HOUR, end)
+                .putInt(KEY_START_HOUR, sh)
+                .putInt(KEY_START_MIN, sm)
+                .putInt(KEY_END_HOUR, eh)
+                .putInt(KEY_END_MIN, em)
                 .apply();
     }
 

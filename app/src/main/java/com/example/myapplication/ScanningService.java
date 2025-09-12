@@ -12,6 +12,7 @@ import android.util.Log;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
 
 import java.util.ArrayList;
 
@@ -177,6 +178,7 @@ public class ScanningService extends Service {
         registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification("Service started"));
+        // startService(new Intent(this, ScanningService.class));
 
         // Clear any stale device list in UI at service start
         foundDevices.clear();
@@ -608,6 +610,16 @@ public class ScanningService extends Service {
         //     stopSelf();
         //     return START_NOT_STICKY;
         // }
+        // if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
+        //         createNotificationChannel();
+        //         startForeground(NOTIFICATION_ID, buildNotification("Service started"));
+        
+        // } else {
+        //     // Log a warning or update notification.
+        //     Log.e(TAG, "Bluetooth scan permission not granted on boot.");
+        // }
+
+    
         boolean reset = intent != null && intent.getBooleanExtra(EXTRA_RESET_PROTOCOL, false);
         if (reset) {
             try { if (currentSleepTimer != null) handler.removeCallbacks(currentSleepTimer); } catch (Exception ignored) {}

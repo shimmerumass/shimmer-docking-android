@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.location.LocationManager;
 import android.os.Handler;
 import android.util.Log;
 
@@ -49,7 +50,9 @@ public class DockingManager {
 
     // Night mode window (settable for testing)
     public int nightStartHour = 20; // 8 PM
+    public int nightStartMinute = 0;
     public int nightEndHour = 17;    // 9 AM
+    public int nightEndMinute = 0;
 
     // State
     private boolean isMonitoring = false;
@@ -79,6 +82,9 @@ public class DockingManager {
 
     // Prevent duplicate protocol runs; set true on start, reset only after silent state ends
     private final java.util.concurrent.atomic.AtomicBoolean protocolActive = new java.util.concurrent.atomic.AtomicBoolean(false);
+    // Track whether ANY Shimmer has been discovered this session (from the initial/any scan)
+    // If none ever found, we keep retrying after each silent state during the night window
+    private boolean everFoundDeviceThisSession = false;
 
 
     private static final int MAX_SILENT_RETRIES = 2; // Maximum retries for silent state
@@ -229,6 +235,8 @@ private void unregisterTransferReceivers() {
     shimmerMacs.clear();
     Log.d(TAG, "Initialization scan started.");
 
+    logRuntimePermissionState("init-start");
+
         // If Bluetooth is OFF, do not mark undocked; go to silent state and inform UI
         if (adapter == null || !adapter.isEnabled()) {
             handleBluetoothOffAndSilent("init scan start");
@@ -253,6 +261,8 @@ private void unregisterTransferReceivers() {
             try { adapter.cancelDiscovery(); } catch (Exception ignored) {}
             safeUnregisterDeviceReceiver();
 
+            logRuntimePermissionState("init-end");
+
             // If Bluetooth turned OFF during scan window, do not mark undocked
             if (adapter == null || !adapter.isEnabled()) {
                 handleBluetoothOffAndSilent("init scan end");
@@ -274,6 +284,26 @@ private void unregisterTransferReceivers() {
                 enterSilentState();
             }
         }, scanDurationMs);
+    }
+
+    // Log current runtime permission + adapter/location state for debugging background failures
+    private void logRuntimePermissionState(String where) {
+        boolean scanGranted = ActivityCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED;
+        boolean connectGranted = ActivityCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+        boolean fineLocGranted = ActivityCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean coarseLocGranted = ActivityCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean btEnabled = adapter != null && adapter.isEnabled();
+        boolean locEnabled = false;
+        try {
+            LocationManager lm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+            if (lm != null) locEnabled = lm.isLocationEnabled();
+        } catch (Exception ignored) {}
+        Log.d(TAG, "PermState[" + where + "]: scan=" + scanGranted + 
+                " connect=" + connectGranted +
+                " fineLoc=" + fineLocGranted +
+                " coarseLoc=" + coarseLocGranted +
+                " locEnabled=" + locEnabled +
+                " btEnabled=" + btEnabled);
     }
 
     private void onShimmerFound(String mac) {
@@ -378,9 +408,14 @@ private void unregisterTransferReceivers() {
             // No current Shimmer but queue not empty - continue processing
             processShimmerQueue();
         } else {
-            // Queue is truly empty - protocol complete
-            Log.d(TAG, "No Shimmers in queue. Protocol complete.");
-            protocolActive.set(false);
+            // Queue empty. If we have NEVER found a device this session and are still in night window, retry init scan.
+            if (!everFoundDeviceThisSession && isNightWindow()) {
+                Log.d(TAG, "No Shimmers found yet this session; retrying initialization scan after silent state.");
+                startInitializationScan();
+            } else {
+                Log.d(TAG, "No Shimmers in queue. Protocol complete.");
+                protocolActive.set(false);
+            }
         }
         }, silentStateDurationMs);
     }
@@ -886,12 +921,19 @@ private void unregisterTransferReceivers() {
     // Night window check
     private boolean isNightWindow() {
         java.util.Calendar cal = java.util.Calendar.getInstance();
-        int hour = cal.get(java.util.Calendar.HOUR_OF_DAY);
-        Log.d(TAG, "isNightWindow: now=" + hour + ", start=" + nightStartHour + ", end=" + nightEndHour);
-        if (nightStartHour < nightEndHour) {
-            return hour >= nightStartHour && hour < nightEndHour;
-        } else {
-            return hour >= nightStartHour || hour < nightEndHour;
+        int nowH = cal.get(java.util.Calendar.HOUR_OF_DAY);
+        int nowM = cal.get(java.util.Calendar.MINUTE);
+        int startTotal = nightStartHour * 60 + nightStartMinute;
+        int endTotal = nightEndHour * 60 + nightEndMinute;
+        int nowTotal = nowH * 60 + nowM;
+        Log.d(TAG, "isNightWindow: now=" + nowH+":"+String.format("%02d",nowM)+
+                " start="+nightStartHour+":"+String.format("%02d",nightStartMinute)+
+                " end="+nightEndHour+":"+String.format("%02d",nightEndMinute));
+        if (startTotal == endTotal) return false; // zero-length
+        if (startTotal < endTotal) {
+            return nowTotal >= startTotal && nowTotal < endTotal;
+        } else { // wraps midnight
+            return nowTotal >= startTotal || nowTotal < endTotal;
         }
     }
 }
