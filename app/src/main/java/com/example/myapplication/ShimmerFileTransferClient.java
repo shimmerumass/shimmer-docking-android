@@ -119,6 +119,7 @@ public class ShimmerFileTransferClient {
     public void transferOneFileFullFlow(String macAddress) {
         // Log the start of the file transfer
         Log.d(TAG, "Starting file transfer for MAC address: " + macAddress);
+        Log.d("DockingManager", "Starting file transfer for MAC address: " + macAddress);
         Log.d(FIREBASE_TAG, "Logging file transfer start to Firebase for MAC address: " + macAddress);
         crashlytics.log("File transfer started for MAC address: " + macAddress);
 
@@ -147,6 +148,12 @@ public class ShimmerFileTransferClient {
                     context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 Log.e(TAG, "Missing BLUETOOTH_CONNECT permission. Aborting file transfer.");
                 crashlytics.log("Missing BLUETOOTH_CONNECT permission. Aborting file transfer.");
+                try {
+                    Intent fail = new Intent("com.example.myapplication.TRANSFER_FAILED");
+                    fail.setPackage(context.getPackageName());
+                    fail.putExtra("reason", "missing_bluetooth_connect_permission");
+                    context.sendBroadcast(fail);
+                } catch (Exception ignored) {}
                 return;
             }
 
@@ -568,22 +575,27 @@ public class ShimmerFileTransferClient {
                 doneIntent.setPackage(context.getPackageName());
                 context.sendBroadcast(doneIntent);
                 // Upload all unsynced files for this Shimmer
-                List<File> unsyncedFiles = getLocalUnsyncedFiles();
-                android.app.NotificationManager notificationManager = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-                String channelId = "S3UploadChannel";
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    android.app.NotificationChannel channel = new android.app.NotificationChannel(channelId, "S3 Uploads", android.app.NotificationManager.IMPORTANCE_DEFAULT);
-                    notificationManager.createNotificationChannel(channel);
-                }
-                for (File file : unsyncedFiles) {
-                    androidx.core.app.NotificationCompat.Builder builder = new androidx.core.app.NotificationCompat.Builder(context, channelId)
-                        .setContentTitle("Uploading to S3")
-                        .setContentText(file.getName())
-                        .setSmallIcon(android.R.drawable.stat_sys_upload)
-                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT);
-                    notificationManager.notify(file.getName().hashCode(), builder.build());
-                    uploadFileToS3(file);
-                }
+//                List<File> unsyncedFiles = getLocalUnsyncedFiles();
+//                android.app.NotificationManager notificationManager = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+//                String channelId = "S3UploadChannel";
+//                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+//                    android.app.NotificationChannel channel = new android.app.NotificationChannel(channelId, "S3 Uploads", android.app.NotificationManager.IMPORTANCE_DEFAULT);
+//                    notificationManager.createNotificationChannel(channel);
+//                }
+//                for (File file : unsyncedFiles) {
+//                    Log.d(SYNC_TAG, "Preparing to upload file to S3: " + file.getAbsolutePath());
+//                    Log.d("DockingManager", "Preparing to upload file to S3: " + file.getAbsolutePath());
+//                    Log.d(TAG, "Preparing to upload file to S3: " + file.getAbsolutePath());
+//                    Log.d(SYNC_TAG, "File sync TRIGGERED from transferOneFileFullFlow for: " + file.getAbsolutePath());
+//                    androidx.core.app.NotificationCompat.Builder builder = new androidx.core.app.NotificationCompat.Builder(context, channelId)
+//                        .setContentTitle("Uploading to S3")
+//                        .setContentText(file.getName())
+//                        .setSmallIcon(android.R.drawable.stat_sys_upload)
+//                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT);
+//                    notificationManager.notify(file.getName().hashCode(), builder.build());
+//                    uploadFileToS3(file);
+//                }
+//
             }
         }
     }
@@ -674,6 +686,7 @@ public class ShimmerFileTransferClient {
 
     public boolean uploadFileToS3(File file) {
         Log.d(SYNC_TAG, "Starting S3 upload for: " + file.getName());
+        Log.d(SYNC_TAG, "File sync TRIGGERED from uploadFileToS3 for: " + file.getAbsolutePath());
         OkHttpClient client = new OkHttpClient();
         try {
             Request getUrlRequest = new Request.Builder()
