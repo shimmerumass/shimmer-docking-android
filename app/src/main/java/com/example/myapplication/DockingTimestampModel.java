@@ -1,3 +1,5 @@
+package com.example.myapplication;
+
 public class DockingTimestampModel {
 	// Shimmer RTC (uint64, 8 bytes)
 	public long shimmerRtc;

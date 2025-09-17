@@ -15,6 +15,8 @@ import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
 
+// import com.example.myapplication.DockingTimestampModel;
+
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -91,6 +93,11 @@ public class DockingManager {
     
     // Executor for handling background tasks
     private final Executor executor = Executors.newSingleThreadExecutor();
+
+    // Store docking timestamps for each shimmer MAC
+    private final java.util.Map<String, DockingTimestampModel> shimmerDockTimestamps = new java.util.HashMap<>();
+    // Store last shimmer RTC read from dock state response
+    private long lastDockedShimmerRtc = 0L;
 
     public DockingManager(Context ctx, DockingCallback cb) {
         this.context = ctx;
@@ -230,12 +237,13 @@ private void unregisterTransferReceivers() {
 
     // State 1: Initialization Scan
     private void startInitializationScan() {
-        // Reset silent-state guard when a new cycle begins
-        silentActive = false;
+    // Reset silent-state guard when a new cycle begins
+    silentActive = false;
     shimmerMacs.clear();
+    shimmerDockTimestamps.clear(); // Clear all docking timestamps for new protocol run
     Log.d(TAG, "Initialization scan started.");
 
-    logRuntimePermissionState("init-start");
+        logRuntimePermissionState("init-start");
 
         // If Bluetooth is OFF, do not mark undocked; go to silent state and inform UI
         if (adapter == null || !adapter.isEnabled()) {
@@ -247,16 +255,19 @@ private void unregisterTransferReceivers() {
             Log.w(TAG, "Missing BLUETOOTH_SCAN permission");
             return;
         }
+
+        // Start discovery of devices
         try {
             if (adapter.isDiscovering()) adapter.cancelDiscovery();
             adapter.startDiscovery();
             // Ensure we only register once
-            registerDeviceReceiverIfNeeded();
+            registerDeviceReceiverIfNeeded(); //We add shimmers into queue here
         } catch (SecurityException e) {
             Log.e(TAG, "Bluetooth scan failed due to missing permission", e);
             return;
         }
 
+        // Stop discovery after a delay
         handler.postDelayed(() -> {
             try { adapter.cancelDiscovery(); } catch (Exception ignored) {}
             safeUnregisterDeviceReceiver();
@@ -496,6 +507,12 @@ private void unregisterTransferReceivers() {
             enterSilentState();
         } else if (status == 1) {
             Log.d(TAG, "Shimmer is docked.");
+            // Always refresh docking timestamp model for this shimmer
+            long shimmerRtc = 0L; // TODO: Replace with actual shimmer RTC value if available
+            int androidRtc = (int)(System.currentTimeMillis() / 1000L);
+            DockingTimestampModel tsModel = new DockingTimestampModel(shimmerRtc, androidRtc);
+            shimmerDockTimestamps.put(shimmerMac, tsModel);
+            Log.d(TAG, "[Docking] Stored timestamp for " + shimmerMac + ": shimmerRtc64=" + shimmerRtc + ", androidRtc32=" + androidRtc);
             callback.onDocked();
             callback.onFileTransferStart();
             // Stop discovery if active and wait briefly before opening RFCOMM for transfer
@@ -522,7 +539,8 @@ private void unregisterTransferReceivers() {
         new Thread(() -> {
             ShimmerFileTransferClient client = new ShimmerFileTransferClient(context);
             try {
-                client.transfer(shimmerMac);
+                    DockingTimestampModel tsModel = shimmerDockTimestamps.get(shimmerMac);
+                    client.transfer(shimmerMac, tsModel);
             } catch (Exception e) {
                 Log.e(TAG, "Transfer threw exception: " + e.getMessage());
                 // Failure path is handled by broadcast as well, but ensure silent as fallback
@@ -569,6 +587,8 @@ private void unregisterTransferReceivers() {
                     connected = true;
                 } catch (IOException e) {
                     Log.e(TAG, "Socket connect attempt " + attempts + " failed.", e);
+                    // Log retry attempt for RTC tracking
+                    Log.d(TAG, "[RTC-RETRY] Attempt " + attempts + " for MAC " + macAddress);
                     if (attempts < 3) try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
                     // If BT toggled OFF during retries, bail with -1
                     if (adapter == null || !adapter.isEnabled()) return -1;
@@ -579,6 +599,8 @@ private void unregisterTransferReceivers() {
                 // Track failure in retries map
                 int currentRetries = silentRetryCounts.getOrDefault(macAddress, 0);
                 silentRetryCounts.put(macAddress, currentRetries + 1);
+                // Log RTC not stored due to connection failure
+                Log.d(TAG, "[RTC-STORE] Connection failed, shimmerRtc64 NOT stored for MAC " + macAddress);
                 return 0;
             }
             Log.d(TAG, "Connected to Shimmer: " + macAddress);
@@ -606,6 +628,7 @@ private void unregisterTransferReceivers() {
                     // Track failure in retries map
                     int currentRetries = silentRetryCounts.getOrDefault(macAddress, 0);
                     silentRetryCounts.put(macAddress, currentRetries + 1);
+                    Log.d(TAG, "[RTC-STORE] Stream ended, shimmerRtc64 NOT stored for MAC " + macAddress);
                     return 0;
                 }
             } while (firstByte == 0xFF);
@@ -614,25 +637,49 @@ private void unregisterTransferReceivers() {
                 int statusByte = in.read();
                 if (statusByte == -1) {
                     Log.e(TAG, "Stream ended before receiving status byte");
+                    Log.d(TAG, "[RTC-STORE] Status byte missing, shimmerRtc64 NOT stored for MAC " + macAddress);
                     return 0;
                 }
-                Log.d(TAG, "Received dock status from Shimmer: " + statusByte);
+                // Read shimmer RTC64 (8 bytes)
+                byte[] rtcBytes = new byte[8];
+                int rtcRead = in.read(rtcBytes);
+                long shimmerRtc = 0L;
+                if (rtcRead == 8) {
+                    // Convert 8 bytes to long (big-endian)
+                    for (int i = 0; i < 8; i++) {
+                        shimmerRtc = (shimmerRtc << 8) | (rtcBytes[i] & 0xFF);
+                    }
+                } else {
+                    Log.e(TAG, "Failed to read shimmer RTC64, got " + rtcRead + " bytes");
+                    Log.d(TAG, "[RTC-STORE] RTC64 read failed, shimmerRtc64 NOT stored for MAC " + macAddress);
+                }
+                Log.d(TAG, "Received dock status from Shimmer: " + statusByte + ", shimmerRtc64=" + shimmerRtc);
+                // Store shimmerRtc for later use (if docked)
+                if (statusByte == 1) {
+                    // Save shimmerRtc in a field for use in timestamp model
+                    lastDockedShimmerRtc = shimmerRtc;
+                    Log.d(TAG, "[RTC-STORE] shimmerRtc64 STORED for MAC " + macAddress + ": " + shimmerRtc);
+                } else {
+                    Log.d(TAG, "[RTC-STORE] shimmerRtc64 NOT stored (undocked) for MAC " + macAddress);
+                }
                 return statusByte; // 0 = Undocked, 1 = Docked
             } else {
                 Log.e(TAG, String.format("Unexpected non-FF, non-D6 byte from Shimmer: 0x%02X (%d)", firstByte, firstByte));
+                Log.d(TAG, "[RTC-STORE] Unexpected response, shimmerRtc64 NOT stored for MAC " + macAddress);
                 return 0;
             }
         } catch (SecurityException se) {
             Log.e(TAG, "Bluetooth connect failed due to missing permission", se);
+            Log.d(TAG, "[RTC-STORE] shimmerRtc64 NOT stored due to permission error for MAC " + macAddress);
             return 0;
         } catch (Exception e) {
             Log.e(TAG, "Error querying dock state: " + e.getMessage(), e);
+            Log.d(TAG, "[RTC-STORE] shimmerRtc64 NOT stored due to exception for MAC " + macAddress);
             return 0;
         } finally {
             if (socket != null) {
                 try { socket.close();
                     Log.d(TAG, "Bluetooth socket closed");
-                
                 } catch (Exception ignored) {
                     Log.e(TAG, "Error closing Bluetooth socket", ignored);
                 }
@@ -778,15 +825,25 @@ private void unregisterTransferReceivers() {
         }
         if (status == 0) {
             Log.d(TAG, "Shimmer is undocked (round robin).");
+            Log.d(TAG, "[RTC-STORE] shimmerRtc64 NOT stored for MAC " + mac + " (undocked)");
             callback.onUndocked();
             enterSilentState();
             // Don't call onComplete here - let retry logic handle it
         } else if (status == 1) {
             Log.d(TAG, "Shimmer is docked (round robin).");
+            // Always refresh docking timestamp model for this shimmer
+            long shimmerRtc = lastDockedShimmerRtc;
+            int androidRtc = (int)(System.currentTimeMillis() / 1000L);
+            DockingTimestampModel tsModel = new DockingTimestampModel(shimmerRtc, androidRtc);
+            shimmerDockTimestamps.put(mac, tsModel);
+            // Reset lastDockedShimmerRtc after storing
+            Log.d(TAG, "[RTC-STORE] shimmerRtc64 STORED for MAC " + mac + ": " + shimmerRtc);
+            Log.d(TAG, "[RTC-STORE] androidRtc32 STORED for MAC " + mac + ": " + androidRtc);
+            lastDockedShimmerRtc = 0L;
+            Log.d(TAG, "[Docking-RR] Stored timestamp for " + mac + ": shimmerRtc64=" + shimmerRtc + ", androidRtc32=" + androidRtc);
             callback.onDocked();
             callback.onFileTransferStart();
             // Stop discovery if active and wait briefly before opening RFCOMM for transfer
-//            try { if (adapter != null && adapter.isDiscovering()) adapter.cancelDiscovery(); } catch (Exception ignored) {}
             Log.d(TAG, "Waiting " + waitBeforeTransferDuration + "ms before starting file transfer (round robin)...");
             handler.postDelayed(() -> startFileTransferRoundRobin(mac, onComplete), waitBeforeTransferDuration);
         }
@@ -818,16 +875,22 @@ private void unregisterTransferReceivers() {
             }
         );
 
-        new Thread(() -> {
-            ShimmerFileTransferClient client = new ShimmerFileTransferClient(context);
-            try {
-                client.transfer(mac);
-            } catch (Exception e) {
-                Log.d(TAG, "Transfer threw exception for " + mac + ": " + e.getMessage());
-                // Failure will also be broadcast by client; ensure silent as fallback
-                enterSilentState();
-            }
-        }).start();
+            new Thread(() -> {
+                ShimmerFileTransferClient client = new ShimmerFileTransferClient(context);
+                DockingTimestampModel tsModel = shimmerDockTimestamps.get(mac);
+                if (tsModel != null) {
+                    Log.d(TAG, "[FileTransfer-RR] Passing timestamp for " + mac + ": shimmerRtc64=" + tsModel.shimmerRtc + ", androidRtc32=" + tsModel.androidRtc);
+                } else {
+                    Log.d(TAG, "[FileTransfer-RR] No timestamp found for " + mac + ", passing null.");
+                }
+                try {
+                    client.transfer(mac, tsModel);
+                } catch (Exception e) {
+                    Log.d(TAG, "Transfer threw exception for " + mac + ": " + e.getMessage());
+                    // Failure will also be broadcast by client; ensure silent as fallback
+                    enterSilentState();
+                }
+            }).start();
     }
 
     // Modified S3 sync for round robin

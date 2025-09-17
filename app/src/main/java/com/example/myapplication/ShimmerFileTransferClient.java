@@ -33,6 +33,9 @@ import java.util.UUID;
 import java.util.logging.Handler;
 import java.util.stream.Collectors;
 
+// Import DockingTimestampModel for timestamp support
+import com.example.myapplication.DockingTimestampModel;
+
 import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.os.SystemClock;
@@ -116,12 +119,16 @@ public class ShimmerFileTransferClient {
         }
     }
 
-    public void transferOneFileFullFlow(String macAddress) {
+    // Overloaded transfer method with timestamp
+    public void transferOneFileFullFlow(String macAddress, DockingTimestampModel timestampModel) {
         // Log the start of the file transfer
         Log.d(TAG, "Starting file transfer for MAC address: " + macAddress);
         Log.d("DockingManager", "Starting file transfer for MAC address: " + macAddress);
         Log.d(FIREBASE_TAG, "Logging file transfer start to Firebase for MAC address: " + macAddress);
         crashlytics.log("File transfer started for MAC address: " + macAddress);
+        if (timestampModel != null) {
+            Log.d(TAG, "Using DockingTimestampModel: shimmerRtc=" + timestampModel.shimmerRtc + ", androidRtc=" + timestampModel.androidRtc);
+        }
 
         Bundle startBundle = new Bundle();
         startBundle.putString("mac_address", macAddress);
@@ -329,8 +336,9 @@ public class ShimmerFileTransferClient {
                 File debugFile = new File(context.getFilesDir(), "debug_log.txt");
                 boolean transferSuccess = false; // Track transfer status
 
-             try (java.io.FileOutputStream binaryWriter = new java.io.FileOutputStream(outputFile);
-                 FileWriter debugWriter = new FileWriter(debugFile, true)) {
+                // Write timestamp header if available
+                try (java.io.FileOutputStream binaryWriter = new java.io.FileOutputStream(outputFile);
+                     FileWriter debugWriter = new FileWriter(debugFile, true)) {
 
                     Log.d(TAG, "File created successfully: " + outputFile.getAbsolutePath());
                     Log.d(TAG, "Receiving chunks...");
@@ -458,8 +466,8 @@ public class ShimmerFileTransferClient {
 
                         // Restart transfer if chunks are invalid
                         if (!chunksAreValid) {
-                            Log.e(TAG, "Chunks are invalid. Restarting transfer...");
-                            transferOneFileFullFlow(macAddress); // Restart the transfer
+                            Log.e(TAG, "Chunks are invalid. Entering silent state and broadcasting failure...");
+                            broadcastFailure("chunks_invalid");
                             return;
                         }
                     }
@@ -524,7 +532,31 @@ public class ShimmerFileTransferClient {
 
                 // Only record in DB if the file completed successfully
                 if (transferSuccess) {
+                    // Log timestamp header after file transfer is complete
+                    if (timestampModel != null) {
+                        Log.d(TAG, "[FileWrite-END] File transfer complete for " + macAddress + ": shimmerRtc64=" + timestampModel.shimmerRtc + ", androidRtc32=" + timestampModel.androidRtc);
+                        // Update RTC and config time in file header
+                        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(outputFile, "rw")) {
+                            // Write shimmerRtc (uint64) to bytes 44-51
+                            raf.seek(44);
+                            long rtc = timestampModel.shimmerRtc;
+                            for (int i = 0; i < 8; i++) {
+                                raf.write((int) ((rtc >> (8 * i)) & 0xFF));
+                            }
+                            // Write androidRtc (uint32) to bytes 52-55
+                            raf.seek(52);
+                            int configTime = (int) timestampModel.androidRtc;
+                            for (int i = 0; i < 4; i++) {
+                                raf.write((configTime >> (8 * i)) & 0xFF);
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error updating RTC/config time in file header", e);
+                        }
+                    } else {
+                        Log.d(TAG, "[FileWrite-END] File transfer complete for " + macAddress + ", no timestamp provided.");
+                    }
                     Log.d(TAG,"Added file to DB: " + outputFile.getAbsolutePath());
+
                     FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
                     SQLiteDatabase db = dbHelper.getWritableDatabase();
                     android.content.ContentValues values = new android.content.ContentValues();
@@ -619,8 +651,14 @@ public class ShimmerFileTransferClient {
         return buffer;
     }
 
-        public void transfer(String macAddress) {
-        transferOneFileFullFlow(macAddress);
+    // Overloaded transfer method with timestamp
+    public void transfer(String macAddress, DockingTimestampModel timestampModel) {
+        transferOneFileFullFlow(macAddress, timestampModel);
+    }
+
+    // Original transfer method for backward compatibility
+    public void transfer(String macAddress) {
+        transferOneFileFullFlow(macAddress, null);
     }
 
 
@@ -757,12 +795,12 @@ public class ShimmerFileTransferClient {
 
     // Central helper: reflect UI error, schedule retry, and broadcast failure reason
     private void uiErrorAndRetry(String message, int retrySeconds, String reason, String macAddress) {
-        clearTransferProgressStateAndNotifyUI(message, retrySeconds);
-        if (retrySeconds > 0) {
-            try {
-                scheduleTransferRetry(macAddress, retrySeconds * 1000L);
-            } catch (Exception ignored) {}
-        }
+    clearTransferProgressStateAndNotifyUI(message, retrySeconds);
+    // if (retrySeconds > 0) {
+    //     try {
+    //         scheduleTransferRetry(macAddress, retrySeconds * 1000L);
+    //     } catch (Exception ignored) {}
+    // }
         try {
             Intent fail = new Intent("com.example.myapplication.TRANSFER_FAILED");
             fail.setPackage(context.getPackageName());
@@ -791,7 +829,7 @@ public class ShimmerFileTransferClient {
 
     // Call this on any IO/disconnect error inside your transfer loop
     private void handleTransferError(File tempOutFile, String reason, Exception e) {
-        Log.e("ShimmerTransfer", "Transfer failed: " + reason, e);
+        Log.e(TAG, "Transfer failed: " + reason, e);
         safelyMarkPartial(tempOutFile);
         broadcastFailure(reason);
     }
@@ -814,6 +852,7 @@ public class ShimmerFileTransferClient {
     }
 
     private void broadcastFailure(String reason) {
+        Log.e(TAG,  "Broadcasting failure: " + reason);
         Intent i = new Intent(DockingService.ACTION_TRANSFER_FAILED);
         i.setPackage(context.getPackageName());
         i.putExtra("reason", reason);
