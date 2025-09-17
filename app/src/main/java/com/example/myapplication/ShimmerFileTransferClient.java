@@ -472,20 +472,19 @@ public class ShimmerFileTransferClient {
                             if (packetId == (TRANSFER_END_PACKET & 0xFF)) {
                                 transferStatus = in.read();
                                 Log.d(TAG, "Received TRANSFER_END_PACKET with status: " + String.format("%02X", transferStatus));
-                                if (transferStatus == 0x00 || transferStatus == 0x01) {
+                                if (transferStatus == 0x01) {
                                     transferSuccess = true; // <-- Mark as success
                                     break;
-                                } else {
+                                } 
+                                else if (transferStatus == 0x00) {
+                                    transferSuccess = false;
+                                    break;
+                                }
+                                else {
+                                    transferSuccess = false;
                                     Log.d(TAG, "Status after FE was not 00 or 01, continuing to skip...");
                                 }
                             }
-                        }
-
-                        if (transferStatus == 0x01) {
-                            Log.d(TAG, "Transfer completed successfully.");
-                            // ... success logic ...
-                        } else {
-                            Log.e(TAG, "File transfer failed for file: " + relativeFilename);
                         }
                     }
                 } catch (IOException e) {
@@ -525,6 +524,7 @@ public class ShimmerFileTransferClient {
 
                 // Only record in DB if the file completed successfully
                 if (transferSuccess) {
+                    Log.d(TAG,"Added file to DB: " + outputFile.getAbsolutePath());
                     FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
                     SQLiteDatabase db = dbHelper.getWritableDatabase();
                     android.content.ContentValues values = new android.content.ContentValues();
