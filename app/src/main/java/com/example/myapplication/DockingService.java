@@ -171,13 +171,13 @@ public class DockingService extends Service implements DockingManager.DockingCal
         // connectivityReceiver registration removed; no unregister
 
         // Restart ScanningService
-        Intent scanIntent = new Intent(this, ScanningService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(scanIntent);
-        } else {
-            startService(scanIntent);
-        }
-        Log.d("DockingService", "DockingService destroyed, ScanningService restarted");
+        // Intent scanIntent = new Intent(this, ScanningService.class);
+        // if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        //     startForegroundService(scanIntent);
+        // } else {
+        //     startService(scanIntent);
+        // }
+        // Log.d("DockingService", "DockingService destroyed, ScanningService restarted");
     }
     // New: Receiver for forced protocol stop
     private final BroadcastReceiver forceStopReceiver = new BroadcastReceiver() {
