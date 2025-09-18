@@ -99,6 +99,12 @@ public class DockingManager {
     // Store last shimmer RTC read from dock state response
     private long lastDockedShimmerRtc = 0L;
 
+    private Thread currentTransferThread;
+    private ShimmerFileTransferClient currentTransferClient;
+
+    //Force Stop Flag
+    public volatile boolean forceStopped = false;
+
     public DockingManager(Context ctx, DockingCallback cb) {
         this.context = ctx;
         this.callback = cb;
@@ -111,50 +117,50 @@ public class DockingManager {
     private BroadcastReceiver transferFailedReceiver;
     private boolean transferReceiversRegistered = false;
 
-private void registerTransferReceivers(Runnable onSuccess, Runnable onFailure) {
-    if (transferReceiversRegistered) {
-        unregisterTransferReceivers();
-    }
-
-    transferDoneReceiver = new BroadcastReceiver() {
-        @Override public void onReceive(Context ctx, Intent intent) {
-            try { unregisterTransferReceivers(); } catch (Exception ignored) {}
-            Log.d(TAG, "Transfer DONE broadcast received: " + intent.getAction());
-            if (onSuccess != null) onSuccess.run();
+    private void registerTransferReceivers(Runnable onSuccess, Runnable onFailure) {
+        if (transferReceiversRegistered) {
+            unregisterTransferReceivers();
         }
-    };
-    transferFailedReceiver = new BroadcastReceiver() {
-        @Override public void onReceive(Context ctx, Intent intent) {
-            try { unregisterTransferReceivers(); } catch (Exception ignored) {}
-            Log.d(TAG, "Transfer FAILED broadcast received: " + intent.getAction());
-            if (onFailure != null) onFailure.run();
+
+        transferDoneReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context ctx, Intent intent) {
+                try { unregisterTransferReceivers(); } catch (Exception ignored) {}
+                Log.d(TAG, "Transfer DONE broadcast received: " + intent.getAction());
+                if (onSuccess != null) onSuccess.run();
+            }
+        };
+        transferFailedReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context ctx, Intent intent) {
+                try { unregisterTransferReceivers(); } catch (Exception ignored) {}
+                Log.d(TAG, "Transfer FAILED broadcast received: " + intent.getAction());
+                if (onFailure != null) onFailure.run();
+            }
+        };
+
+        try {
+            // Listen to the same actions DockingService registers
+            IntentFilter doneFilter = new IntentFilter(DockingService.ACTION_TRANSFER_DONE);
+            IntentFilter failedFilter = new IntentFilter(DockingService.ACTION_TRANSFER_FAILED);
+
+        context.registerReceiver(transferDoneReceiver, doneFilter, Context.RECEIVER_NOT_EXPORTED);
+        context.registerReceiver(transferFailedReceiver, failedFilter, Context.RECEIVER_NOT_EXPORTED);
+
+            transferReceiversRegistered = true;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to register transfer receivers: " + e.getMessage());
+            transferReceiversRegistered = false;
         }
-    };
-
-    try {
-        // Listen to the same actions DockingService registers
-        IntentFilter doneFilter = new IntentFilter(DockingService.ACTION_TRANSFER_DONE);
-        IntentFilter failedFilter = new IntentFilter(DockingService.ACTION_TRANSFER_FAILED);
-
-       context.registerReceiver(transferDoneReceiver, doneFilter, Context.RECEIVER_NOT_EXPORTED);
-       context.registerReceiver(transferFailedReceiver, failedFilter, Context.RECEIVER_NOT_EXPORTED);
-
-        transferReceiversRegistered = true;
-    } catch (Exception e) {
-        Log.e(TAG, "Failed to register transfer receivers: " + e.getMessage());
-        transferReceiversRegistered = false;
     }
-}
 
 
 
-private void unregisterTransferReceivers() {
-        if (!transferReceiversRegistered) return;
-        try { context.unregisterReceiver(transferDoneReceiver); } catch (Exception ignored) {}
-        try { context.unregisterReceiver(transferFailedReceiver); } catch (Exception ignored) {}
-        transferReceiversRegistered = false;
-    }
-    
+    private void unregisterTransferReceivers() {
+            if (!transferReceiversRegistered) return;
+            try { context.unregisterReceiver(transferDoneReceiver); } catch (Exception ignored) {}
+            try { context.unregisterReceiver(transferFailedReceiver); } catch (Exception ignored) {}
+            transferReceiversRegistered = false;
+        }
+        
     private void processShimmerQueue() {
         if (shimmerMacs.isEmpty()) {
             Log.d(TAG, "All Shimmers processed. Protocol complete.");
@@ -393,11 +399,12 @@ private void unregisterTransferReceivers() {
 
     // State 4: Silent State
     private void enterSilentState() {
+        if (forceStopped) return;
         if (silentActive) return; // idempotent guard
         silentActive = true;
         Log.d(TAG, "Entering silent state...");
-    // Clean up any pending transfer receivers to avoid leaks
-    unregisterTransferReceivers();
+        // Clean up any pending transfer receivers to avoid leaks
+        unregisterTransferReceivers();
         // Cancel any pending scan callbacks to avoid re-entry
         handler.removeCallbacksAndMessages(null);
         // Make sure monitoring loop halts
@@ -433,6 +440,7 @@ private void unregisterTransferReceivers() {
 
     // NEW: Handle retry logic after silent state
     private void handleSilentStateRetry() {
+        if (forceStopped) return;
         if (shimmerMac == null) {
             startInitializationScan();
             return;
@@ -875,8 +883,8 @@ private void unregisterTransferReceivers() {
             }
         );
 
-            new Thread(() -> {
-                ShimmerFileTransferClient client = new ShimmerFileTransferClient(context);
+        currentTransferClient = new ShimmerFileTransferClient(context);
+        currentTransferThread = new Thread(() -> {
                 DockingTimestampModel tsModel = shimmerDockTimestamps.get(mac);
                 if (tsModel != null) {
                     Log.d(TAG, "[FileTransfer-RR] Passing timestamp for " + mac + ": shimmerRtc64=" + tsModel.shimmerRtc + ", androidRtc32=" + tsModel.androidRtc);
@@ -884,13 +892,14 @@ private void unregisterTransferReceivers() {
                     Log.d(TAG, "[FileTransfer-RR] No timestamp found for " + mac + ", passing null.");
                 }
                 try {
-                    client.transfer(mac, tsModel);
+                    currentTransferClient.transfer(mac, tsModel);
                 } catch (Exception e) {
                     Log.d(TAG, "Transfer threw exception for " + mac + ": " + e.getMessage());
                     // Failure will also be broadcast by client; ensure silent as fallback
                     enterSilentState();
                 }
-            }).start();
+            });
+        currentTransferThread.start();
     }
 
     // Modified S3 sync for round robin
@@ -955,6 +964,17 @@ private void unregisterTransferReceivers() {
 
     public void forceStopProtocol() {
         Log.w(TAG, "Force stopping docking protocol and cleaning up all state.");
+        forceStopped = true;
+
+        // Interrupt transfer thread if running
+        if (currentTransferClient != null) {
+            currentTransferClient.forceStop();
+        }
+        if (currentTransferThread != null && currentTransferThread.isAlive()) {
+            currentTransferThread.interrupt();
+            Log.d(TAG, "File Transfer thread interrupted.");
+        }
+        currentTransferThread = null;
 
         // Cancel all pending handler callbacks
         handler.removeCallbacksAndMessages(null);
@@ -962,9 +982,6 @@ private void unregisterTransferReceivers() {
         // Unregister device and transfer receivers
         safeUnregisterDeviceReceiver();
         unregisterTransferReceivers();
-
-        // Stop any ongoing file transfer or sync (if you have references, interrupt/close them here)
-        // Example: if (currentTransferThread != null) currentTransferThread.interrupt();
 
         // Clear all protocol state
         isMonitoring = false;
@@ -980,10 +997,13 @@ private void unregisterTransferReceivers() {
         // Optionally notify UI/service
         sendDockingStatus("Docking protocol forcibly stopped and cleaned up.");
         Log.d(TAG, "Docking protocol fully stopped.");
+
+
     }
 
     // Night docking entry point (called by DockingService)
     public void startNightDockingFlow() {
+        forceStopped = false;
         Log.d(TAG, "startNightDockingFlow() called");
         // Single-flight: ignore if protocol is already active (including during silent window)
         if (!protocolActive.compareAndSet(false, true)) {
