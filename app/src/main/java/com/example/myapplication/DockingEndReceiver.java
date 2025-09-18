@@ -26,5 +26,12 @@ public class DockingEndReceiver extends BroadcastReceiver {
             } catch (Exception e) {
                 Log.e("DockingEndReceiver", "Failed to send FORCE_STOP_DOCKING: " + e.getMessage());
             }
+
+            // Immediately schedule next day's alarm so it repeats daily
+            try {
+                DockingScheduler.scheduleDailyDocking(context.getApplicationContext());
+            } catch (Exception e) {
+                Log.e("DockingStartReceiver", "Failed to reschedule next docking alarm: " + e.getMessage());
+            }
     }
 }
