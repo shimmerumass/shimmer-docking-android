@@ -154,6 +154,11 @@ public class DockingService extends Service implements DockingManager.DockingCal
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+            // Reset forceStopped flag to allow protocol restart
+            if (dockingManager != null) {
+                Log.d("Docking","Resetting Flag");
+                dockingManager.forceStopped = false;
+            }
         return START_STICKY;
     }
 
