@@ -275,7 +275,7 @@ public class ShimmerFileTransferClient {
                 String experimentTag = null, shimmerIDTag = null;
                 String[] filenameParts = relativeFilename.split("/");
                 for (String part : filenameParts) {
-                    if (part.startsWith("FullC_")) experimentTag = part;
+                    if (part.startsWith("FullC_") || part.startsWith("TEST")) experimentTag = part;
                     if (part.startsWith("Shimmer_")) shimmerIDTag = part;
                 }
                 java.util.Map<String, String> tags = new java.util.HashMap<>();
@@ -327,7 +327,21 @@ public class ShimmerFileTransferClient {
                 // Output filename: <phoneMac>__<timestamp>__<experimentName>__<shimmerID>__<baseName>.txt
                 String experimentName = experimentTag != null ? experimentTag : "";
                 String shimmerID = shimmerIDTag != null ? shimmerIDTag : "";
-                String newFilename = phoneMac + "__" + timestamp + "__" + experimentName + "__" + shimmerID + "__" + baseName + ".txt";
+
+               
+
+                String newFilename = phoneMac + "__" + timestamp + "__" + experimentName + "__" + shimmerID + "__" + baseName;
+                if(shimmerID.replaceAll(".*_(\\w{4})-.*", "$1").
+                                        matches(macAddress.replace(":", "").substring(macAddress.replace(":", "").length() - 4))) { // id = "E169"
+                    Log.d(TAG, "Shimmer ID matches MAC address suffix: " + shimmerID + macAddress);
+                    newFilename +=  ".txt";
+                }
+                else {
+                    Log.w(TAG, "Shimmer ID does NOT match MAC address suffix.");
+                    newFilename += "__wrong.txt";
+
+                }
+                
                 File dataDir = new File(context.getFilesDir(), "data");
                 if (!dataDir.exists()) dataDir.mkdirs();
                 File outputFile = new File(dataDir, newFilename);
