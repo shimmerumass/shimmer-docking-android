@@ -953,6 +953,35 @@ private void unregisterTransferReceivers() {
         enterSilentState();
     }
 
+    public void forceStopProtocol() {
+        Log.w(TAG, "Force stopping docking protocol and cleaning up all state.");
+
+        // Cancel all pending handler callbacks
+        handler.removeCallbacksAndMessages(null);
+
+        // Unregister device and transfer receivers
+        safeUnregisterDeviceReceiver();
+        unregisterTransferReceivers();
+
+        // Stop any ongoing file transfer or sync (if you have references, interrupt/close them here)
+        // Example: if (currentTransferThread != null) currentTransferThread.interrupt();
+
+        // Clear all protocol state
+        isMonitoring = false;
+        silentActive = false;
+        shimmerMacs.clear();
+        completedShimmers.clear();
+        silentRetryCounts.clear();
+        shimmerDockTimestamps.clear();
+        shimmerMac = null;
+        everFoundDeviceThisSession = false;
+        protocolActive.set(false);
+
+        // Optionally notify UI/service
+        sendDockingStatus("Docking protocol forcibly stopped and cleaned up.");
+        Log.d(TAG, "Docking protocol fully stopped.");
+    }
+
     // Night docking entry point (called by DockingService)
     public void startNightDockingFlow() {
         Log.d(TAG, "startNightDockingFlow() called");

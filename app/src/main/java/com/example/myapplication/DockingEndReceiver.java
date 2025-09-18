@@ -19,6 +19,7 @@ public class DockingEndReceiver extends BroadcastReceiver {
             if (!"com.example.myapplication.END_DOCKING".equals(intent.getAction())) return;
             Log.d("DockingEndReceiver", "Docking window ended. Sending FORCE_STOP_DOCKING broadcast.");
             try {
+                Log.d("DockingEndReciever", "Sending com.example.myapplication.FORCE_STOP_DOCKING");
                 Intent stopIntent = new Intent(DockingService.ACTION_FORCE_STOP);
                 stopIntent.setPackage(context.getPackageName());
                 context.sendBroadcast(stopIntent);

@@ -132,24 +132,22 @@ public class DockingService extends Service implements DockingManager.DockingCal
 
         // Load latest window hours
         SharedPreferences prefs = getSharedPreferences("docking_prefs", MODE_PRIVATE);
-    int startHour = prefs.getInt("night_start_hour", 20);
-    int startMinute = prefs.getInt("night_start_minute", 0);
-    int endHour = prefs.getInt("night_end_hour", 9);
-    int endMinute = prefs.getInt("night_end_minute", 0);
+        int startHour = prefs.getInt("night_start_hour", 20);
+        int startMinute = prefs.getInt("night_start_minute", 0);
+        int endHour = prefs.getInt("night_end_hour", 9);
+        int endMinute = prefs.getInt("night_end_minute", 0);
 
-    dockingManager = new DockingManager(this, this);
-    dockingManager.nightStartHour = startHour;
-    dockingManager.nightStartMinute = startMinute;
-    dockingManager.nightEndHour = endHour;
-    dockingManager.nightEndMinute = endMinute;
+        dockingManager = new DockingManager(this, this);
+        dockingManager.nightStartHour = startHour;
+        dockingManager.nightStartMinute = startMinute;
+        dockingManager.nightEndHour = endHour;
+        dockingManager.nightEndMinute = endMinute;
 
         handler.post(() -> dockingManager.startNightDockingFlow());
-
         // Receivers: removed connectivityReceiver; docking is Bluetooth-only
         registerReceiver(transferDoneReceiver, new IntentFilter(ACTION_TRANSFER_DONE), Context.RECEIVER_NOT_EXPORTED);
         registerReceiver(transferFailedReceiver, new IntentFilter(ACTION_TRANSFER_FAILED), Context.RECEIVER_NOT_EXPORTED);
         registerReceiver(btStateReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), Context.RECEIVER_NOT_EXPORTED);
-
         // Register receiver for forced protocol stop
         registerReceiver(forceStopReceiver, new IntentFilter(ACTION_FORCE_STOP), Context.RECEIVER_NOT_EXPORTED);
     }
@@ -184,7 +182,9 @@ public class DockingService extends Service implements DockingManager.DockingCal
         @Override
         public void onReceive(Context context, Intent intent) {
             Log.w("DockingService", "Received FORCE_STOP_DOCKING. Cleaning up protocol...");
-            if (dockingManager != null) dockingManager.forceSilentState();
+            if (dockingManager != null) 
+                // dockingManager.forceSilentState();
+                dockingManager.forceStopProtocol();
             updateNotification("Docking protocol forcibly stopped.");
             sendDockingStatus("Docking protocol forcibly stopped.");
             stopSelf();

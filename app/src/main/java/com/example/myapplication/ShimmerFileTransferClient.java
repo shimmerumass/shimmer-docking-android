@@ -77,48 +77,6 @@ public class ShimmerFileTransferClient {
     // Configuration
     private static final int CHUNK_GROUP_SIZE = 16;
 
-    // Schedule a retry of TransferService without using Handlers
-    private void scheduleTransferRetry(String macAddress, long delayMs) {
-        try {
-            android.app.AlarmManager am = (android.app.AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-            if (am == null) throw new IllegalStateException("AlarmManager not available");
-
-            Intent intent = new Intent("com.example.myapplication.TRANSFER_RETRY");
-            intent.setPackage(context.getPackageName());
-            intent.putExtra("mac_address", macAddress);
-            int requestCode = 2001;
-            int flags = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M
-                    ? android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
-                    : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
-            android.app.PendingIntent pi = android.app.PendingIntent.getBroadcast(context, requestCode, intent, flags);
-
-            long triggerAt = android.os.SystemClock.elapsedRealtime() + delayMs;
-
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                    am.setExactAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi);
-                } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
-                    am.setExact(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi);
-                } else {
-                    am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi);
-                }
-            } catch (SecurityException se) {
-                // Fallback to inexact alarm without exact-alarm permission
-                am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi);
-            }
-        } catch (Exception e) {
-            // Last-resort fallback: post a delayed broadcast; works while app process is alive
-            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                try {
-                    Intent retry = new Intent("com.example.myapplication.TRANSFER_RETRY");
-                    retry.setPackage(context.getPackageName());
-                    retry.putExtra("mac_address", macAddress);
-                    context.sendBroadcast(retry);
-                } catch (Exception ignored) {}
-            }, delayMs);
-        }
-    }
-
     // Overloaded transfer method with timestamp
     public void transferOneFileFullFlow(String macAddress, DockingTimestampModel timestampModel) {
         // Log the start of the file transfer
@@ -810,11 +768,6 @@ public class ShimmerFileTransferClient {
     // Central helper: reflect UI error, schedule retry, and broadcast failure reason
     private void uiErrorAndRetry(String message, int retrySeconds, String reason, String macAddress) {
     clearTransferProgressStateAndNotifyUI(message, retrySeconds);
-    // if (retrySeconds > 0) {
-    //     try {
-    //         scheduleTransferRetry(macAddress, retrySeconds * 1000L);
-    //     } catch (Exception ignored) {}
-    // }
         try {
             Intent fail = new Intent("com.example.myapplication.TRANSFER_FAILED");
             fail.setPackage(context.getPackageName());
