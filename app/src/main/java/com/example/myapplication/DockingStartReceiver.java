@@ -18,12 +18,5 @@ public class DockingStartReceiver extends BroadcastReceiver {
         } else {
             context.startService(serviceIntent);
         }
-
-        // Immediately schedule next day's alarm so it repeats daily
-        try {
-            DockingScheduler.scheduleDailyDocking(context.getApplicationContext());
-        } catch (Exception e) {
-            Log.e("DockingStartReceiver", "Failed to reschedule next docking alarm: " + e.getMessage());
-        }
     }
 }

@@ -578,28 +578,6 @@ public class ShimmerFileTransferClient {
                 Intent doneIntent = new Intent("com.example.myapplication.TRANSFER_DONE");
                 doneIntent.setPackage(context.getPackageName());
                 context.sendBroadcast(doneIntent);
-                // Upload all unsynced files for this Shimmer
-//                List<File> unsyncedFiles = getLocalUnsyncedFiles();
-//                android.app.NotificationManager notificationManager = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-//                String channelId = "S3UploadChannel";
-//                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-//                    android.app.NotificationChannel channel = new android.app.NotificationChannel(channelId, "S3 Uploads", android.app.NotificationManager.IMPORTANCE_DEFAULT);
-//                    notificationManager.createNotificationChannel(channel);
-//                }
-//                for (File file : unsyncedFiles) {
-//                    Log.d(SYNC_TAG, "Preparing to upload file to S3: " + file.getAbsolutePath());
-//                    Log.d("DockingManager", "Preparing to upload file to S3: " + file.getAbsolutePath());
-//                    Log.d(TAG, "Preparing to upload file to S3: " + file.getAbsolutePath());
-//                    Log.d(SYNC_TAG, "File sync TRIGGERED from transferOneFileFullFlow for: " + file.getAbsolutePath());
-//                    androidx.core.app.NotificationCompat.Builder builder = new androidx.core.app.NotificationCompat.Builder(context, channelId)
-//                        .setContentTitle("Uploading to S3")
-//                        .setContentText(file.getName())
-//                        .setSmallIcon(android.R.drawable.stat_sys_upload)
-//                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT);
-//                    notificationManager.notify(file.getName().hashCode(), builder.build());
-//                    uploadFileToS3(file);
-//                }
-//
             }
         }
     }
@@ -824,5 +802,12 @@ public class ShimmerFileTransferClient {
         i.setPackage(context.getPackageName());
         i.putExtra("reason", reason);
         context.sendBroadcast(i);
+    }
+
+    public void forceStop() {
+        if (socket != null) {
+            try { socket.close(); } catch (IOException ignored) {}
+            socket = null;
+        }
     }
 }
