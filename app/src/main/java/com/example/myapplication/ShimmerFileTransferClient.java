@@ -671,6 +671,28 @@ public class ShimmerFileTransferClient {
         return missing;
     }
 
+    private void notifyBackendDecodeAndStore(String fileName) {
+        OkHttpClient client = new OkHttpClient();
+        try {
+            JSONObject body = new JSONObject();
+            body.put("full_file_name", fileName);
+            RequestBody reqBody = RequestBody.create(body.toString(), MediaType.parse("application/json"));
+            Request request = new Request.Builder()
+                    .url("https://odb777ddnc.execute-api.us-east-2.amazonaws.com/decode-and-store/")
+                    .post(reqBody)
+                    .build();
+            try (Response response = client.newCall(request).execute()) {
+                if (response.isSuccessful()) {
+                    Log.d(SYNC_TAG, "Metadata decode/store successful for: " + fileName);
+                } else {
+                    Log.e(SYNC_TAG, "Metadata decode/store failed for: " + fileName + " code: " + response.code());
+                }
+            }
+        } catch (Exception e) {
+            Log.e(SYNC_TAG, "Exception during metadata decode/store: " + e.getMessage(), e);
+        }
+    }
+
 
     public boolean uploadFileToS3(File file) {
         Log.d(SYNC_TAG, "Starting S3 upload for: " + file.getName());
@@ -697,6 +719,8 @@ public class ShimmerFileTransferClient {
             try (Response uploadResponse = client.newCall(uploadRequest).execute()) {
                 if (uploadResponse.isSuccessful()) {
                     Log.d(SYNC_TAG, "S3 upload successful for: " + file.getName());
+                    // NEW: Notify backend to decode and store metadata
+                    notifyBackendDecodeAndStore(file.getName());
                     return true;
                 } else {
                     Log.e(SYNC_TAG, "S3 upload failed with code: " + uploadResponse.code());
@@ -710,7 +734,7 @@ public class ShimmerFileTransferClient {
             return false;
         }
     }
-
+    
     public void markFileAsSynced(File file) {
         Log.d(SYNC_TAG, "Marking file as synced in DB: " + file.getName());
         FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);
