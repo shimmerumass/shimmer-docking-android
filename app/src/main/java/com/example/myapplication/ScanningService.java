@@ -40,7 +40,7 @@ public class ScanningService extends Service {
     private static final long SCAN_DURATION_MS = 15 * 1000;                 // 15 sec scan
     private static final long SCAN_INTERVAL_MS = 2 * 60 * 1000;               // 2 min interval for extended search scans
     private static final long EXTENDED_SEARCH_TOTAL_MS = 30 * 60 * 1000;      // total extended search period = 30 min
-    private static final long SLEEP_30_MIN_MS = 30 * 60 * 1000;               // sleep 30 minutes if device found
+    private static final long SLEEP_30_MIN_MS = 3 * 60 * 1000;               // sleep 30 minutes if device found
     private static final long SLEEP_20_MIN_MS = 20 * 60 * 1000;               // sleep 20 minutes if no device found in extended search
 
     private long scanStartTime = 0;
@@ -384,30 +384,28 @@ public class ScanningService extends Service {
 
         // Adaptive logic:
         if (!isExtendedSearch) {  // Initial scan branch.
-            if (count < 2) {
-                Log.d(TAG, "Less than 2 devices found in initial scan. Starting extended search.");
-                startExtendedSearch();
-            } else {
-                Log.d(TAG, "2 or more devices found in initial scan. Disabling Bluetooth and sleeping for 30 minutes.");
-                disableBluetooth();
-                sleepThenRestart(SLEEP_30_MIN_MS);
-            }
-        } else {  // Extended Search branch.
-            if (count >= 2) {
-                Log.d(TAG, "2 or more devices found during extended search. Disabling Bluetooth and sleeping for 30 minutes.");
-                disableBluetooth();
-                sleepThenRestart(SLEEP_30_MIN_MS);
-            } else {
-                extendedSearchElapsed += SCAN_INTERVAL_MS;
-                if (extendedSearchElapsed >= EXTENDED_SEARCH_TOTAL_MS) {
-                    Log.d(TAG, "Extended search reached max duration. Sleeping for 20 minutes and resetting to initial scan.");
-                    isExtendedSearch = false;
-                    sleepThenRestart(SLEEP_20_MIN_MS);
+                if (count < 2) {
+                    Log.d(TAG, "Less than 2 devices found in initial scan. Starting extended search.");
+                    startExtendedSearch();
                 } else {
-                    Log.d(TAG, "Extended search ongoing. Scheduling next scan after 2 minutes.");
-                    scheduleNextScan();
+                    Log.d(TAG, "2 or more devices found in initial scan. Sleeping for 30 minutes.");
+                    sleepThenRestart(SLEEP_30_MIN_MS);
                 }
-            }
+        } else {  // Extended Search branch.
+                if (count >= 2) {
+                    Log.d(TAG, "2 or more devices found during extended search. Sleeping for 30 minutes.");
+                    sleepThenRestart(SLEEP_30_MIN_MS);
+                } else {
+                    extendedSearchElapsed += SCAN_INTERVAL_MS;
+                    if (extendedSearchElapsed >= EXTENDED_SEARCH_TOTAL_MS) {
+                        Log.d(TAG, "Extended search reached max duration. Sleeping for 20 minutes and resetting to initial scan.");
+                        isExtendedSearch = false;
+                        sleepThenRestart(SLEEP_20_MIN_MS);
+                    } else {
+                        Log.d(TAG, "Extended search ongoing. Scheduling next scan after 2 minutes.");
+                        scheduleNextScan();
+                    }
+                }
         }
     }
 

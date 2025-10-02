@@ -202,7 +202,7 @@ public class DockingService extends Service implements DockingManager.DockingCal
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID, "Docking Protocol", NotificationManager.IMPORTANCE_LOW);
+                CHANNEL_ID, "Docking Protocol", NotificationManager.IMPORTANCE_HIGH);
             NotificationManager manager = getSystemService(NotificationManager.class);
             manager.createNotificationChannel(channel);
         }
@@ -214,6 +214,7 @@ public class DockingService extends Service implements DockingManager.DockingCal
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build();
     }
 

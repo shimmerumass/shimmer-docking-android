@@ -233,7 +233,7 @@ public class ShimmerFileTransferClient {
                 String experimentTag = null, shimmerIDTag = null;
                 String[] filenameParts = relativeFilename.split("/");
                 for (String part : filenameParts) {
-                    if (part.startsWith("FullC_") || part.startsWith("TEST")) experimentTag = part;
+                    if (part.startsWith("FullC_") || part.startsWith("TEST") || part.startsWith("Test")) experimentTag = part;
                     if (part.startsWith("Shimmer_")) shimmerIDTag = part;
                 }
                 java.util.Map<String, String> tags = new java.util.HashMap<>();
@@ -734,7 +734,7 @@ public class ShimmerFileTransferClient {
             return false;
         }
     }
-    
+
     public void markFileAsSynced(File file) {
         Log.d(SYNC_TAG, "Marking file as synced in DB: " + file.getName());
         FileMetaDatabaseHelper dbHelper = new FileMetaDatabaseHelper(context);

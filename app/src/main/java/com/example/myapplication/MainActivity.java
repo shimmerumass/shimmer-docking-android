@@ -4,7 +4,9 @@ import com.google.android.material.button.MaterialButton;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.ActivityManager;
+import android.app.admin.DevicePolicyManager;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -27,12 +29,17 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
+
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
+
 
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.analytics.FirebaseAnalytics;
@@ -352,6 +359,32 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+         DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+         ComponentName adminName = new ComponentName(this, ShimmerDeviceAdminReceiver.class);
+
+         if (dpm != null) {
+             if (dpm.isAdminActive(adminName)) {
+                 // Admin is active, safe to set lock task packages
+                 dpm.setLockTaskPackages(adminName, new String[]{getPackageName()});
+
+                 dpm.setLockTaskFeatures(adminName,
+                         DevicePolicyManager.LOCK_TASK_FEATURE_HOME |
+                                 DevicePolicyManager.LOCK_TASK_FEATURE_NOTIFICATIONS |
+                                 DevicePolicyManager.LOCK_TASK_FEATURE_SYSTEM_INFO );
+
+                 startLockTask();
+             } else {
+                 // Admin not active: prompt user to activate it
+                 Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
+                 intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminName);
+                 intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                         "Enable admin to allow Lock Task Mode");
+                 startActivity(intent);
+             }
+         }
+
+
 
         FirebaseApp.initializeApp(this);
         firebaseAnalytics = FirebaseAnalytics.getInstance(this);
@@ -1223,133 +1256,288 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
-    private void showDevicePatientMapDialog(String mac, String existingName, boolean mappingFound) {
-        Log.d("MapButton", "showDevicePatientMapDialog: mac=" + mac + ", mappingFound=" + mappingFound + ", name=" + existingName);
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (16 * getResources().getDisplayMetrics().density);
-        layout.setPadding(pad, pad, pad, 0);
+private void showDevicePatientMapDialog(String mac, String existingName, boolean mappingFound) {
+    LinearLayout layout = new LinearLayout(this);
+    layout.setOrientation(LinearLayout.VERTICAL);
+    int pad = (int) (16 * getResources().getDisplayMetrics().density);
+    layout.setPadding(pad, pad, pad, 0);
 
-        EditText macInput = new EditText(this);
-        macInput.setHint("Device MAC");
-        macInput.setText(mac);
-        macInput.setEnabled(false);
-        layout.addView(macInput);
+    // Device field
+    TextView deviceLabel = new TextView(this);
+    deviceLabel.setText("Device");
+    layout.addView(deviceLabel);
 
-        EditText nameInput = new EditText(this);
-        nameInput.setHint("Patient name");
-        if (mappingFound && existingName != null && !existingName.isEmpty()) {
-            nameInput.setText(existingName);
-            nameInput.setEnabled(false); // read-only if mapping exists
-            Log.d("MapButton", "Mapping found for MAC, showing name read-only");
-            Toast.makeText(this, "Mapping found for MAC", Toast.LENGTH_SHORT).show();
-        } else {
-            nameInput.setEnabled(true);
-            Log.d("MapButton", "No mapping found, enabling name input");
-            Toast.makeText(this, "No mapping found. Enter patient name.", Toast.LENGTH_SHORT).show();
-        }
-        layout.addView(nameInput);
+    EditText deviceInput = new EditText(this);
+    deviceInput.setText(mac);
+    deviceInput.setEnabled(false); // always read-only
+    layout.addView(deviceInput);
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this)
-                .setTitle("Map Device to Patient")
-                .setView(layout)
-                .setNegativeButton("Cancel", (d, w) -> d.dismiss());
+    // Patient field
+    TextView patientLabel = new TextView(this);
+    patientLabel.setText("Patient");
+    layout.addView(patientLabel);
 
-        AlertDialog dialog;
-        if (mappingFound && existingName != null && !existingName.isEmpty()) {
-            builder.setPositiveButton("Close", (d, w) -> d.dismiss());
-            dialog = builder.create();
-        } else {
-            builder.setPositiveButton("Save", null);
-            dialog = builder.create();
-            dialog.setOnShowListener(d -> {
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                    String nameVal = nameInput.getText().toString().trim();
-                    if (nameInput.isEnabled() && nameVal.isEmpty()) {
-                        Log.d("MapButton", "Save clicked but name empty");
-                        Toast.makeText(this, "Enter patient name", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    Log.d("MapButton", "Save clicked, sending PUT for MAC: " + mac + ", name: " + nameVal);
-                    new Thread(() -> putMapping(mac, nameVal, dialog)).start();
-                });
+    EditText patientInput = new EditText(this);
+    if (existingName != null && !existingName.isEmpty()) {
+        patientInput.setText(existingName);
+    }
+    layout.addView(patientInput);
+
+    // Shimmer 1 field
+    TextView shimmer1Label = new TextView(this);
+    shimmer1Label.setText("Shimmer 1");
+    layout.addView(shimmer1Label);
+
+    EditText shimmer1Input = new EditText(this);
+    layout.addView(shimmer1Input);
+
+    // Shimmer 2 field
+    TextView shimmer2Label = new TextView(this);
+    shimmer2Label.setText("Shimmer 2");
+    layout.addView(shimmer2Label);
+
+    EditText shimmer2Input = new EditText(this);
+    layout.addView(shimmer2Input);
+
+    // UpdatedAt field
+    TextView updatedAtView = new TextView(this);
+    updatedAtView.setPadding(0, 24, 0, 0);
+    layout.addView(updatedAtView);
+
+    AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle("Device Details")
+            .setView(layout)
+            .setNegativeButton("Cancel", (d, w) -> d.dismiss());
+
+    AlertDialog dialog;
+
+    if (mappingFound) {
+        // Read-only mode
+        builder.setPositiveButton("Close", (d, w) -> d.dismiss());
+        dialog = builder.create();
+
+        // Fill remaining fields from GET response and lock them
+        getMapping(mac, patientInput, shimmer1Input, shimmer2Input, updatedAtView, true);
+
+    } else {
+        // First-time entry mode
+        builder.setPositiveButton("Save", null);
+        dialog = builder.create();
+        dialog.setOnShowListener(d -> {
+            Button saveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            saveButton.setOnClickListener(v -> {
+                String patientVal = patientInput.getText().toString().trim();
+                String shimmer1Val = shimmer1Input.getText().toString().trim();
+                String shimmer2Val = shimmer2Input.getText().toString().trim();
+
+                if (patientVal.isEmpty()) {
+                    Toast.makeText(this, "Patient name required", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                putMapping(mac, patientVal, shimmer1Val, shimmer2Val, dialog);
             });
-        }
-        dialog.show();
+        });
     }
 
+    dialog.show();
+}
 
-    // Replace old getMapping with dialog-aware version
-    private void getMapping(String mac, EditText nameInput, EditText macInput, AlertDialog dialog) {
+
+// private void showDevicePatientMapDialog(String mac, String existingName, boolean mappingFound) {
+//     Log.d("MapButton", "showDevicePatientMapDialog: mac=" + mac + ", mappingFound=" + mappingFound);
+//     LinearLayout layout = new LinearLayout(this);
+//     layout.setOrientation(LinearLayout.VERTICAL);
+//     int pad = (int) (16 * getResources().getDisplayMetrics().density);
+//     layout.setPadding(pad, pad, pad, 0);
+
+//     EditText macInput = new EditText(this);
+//     macInput.setHint("Device MAC");
+//     macInput.setText(mac);
+//     macInput.setEnabled(false);
+//     layout.addView(macInput);
+
+//     EditText patientInput = new EditText(this);
+//     patientInput.setHint("Patient name");
+//     layout.addView(patientInput);
+
+//     EditText shimmer1Input = new EditText(this);
+//     shimmer1Input.setHint("Shimmer 1");
+//     layout.addView(shimmer1Input);
+
+//     EditText shimmer2Input = new EditText(this);
+//     shimmer2Input.setHint("Shimmer 2");
+//     layout.addView(shimmer2Input);
+
+//     TextView updatedAtView = new TextView(this);
+//     updatedAtView.setHint("Last Updated");
+//     updatedAtView.setPadding(0, pad, 0, 0);
+//     layout.addView(updatedAtView);
+
+//     // REMOVE or comment out the rawResponseView
+//     // TextView rawResponseView = new TextView(this);
+//     // rawResponseView.setHint("Raw Response");
+//     // rawResponseView.setPadding(0, pad, 0, 0);
+//     // layout.addView(rawResponseView);
+
+//     if (mappingFound) {
+//         patientInput.setEnabled(false);
+//         shimmer1Input.setEnabled(false);
+//         shimmer2Input.setEnabled(false);
+//         Log.d("MapButton", "Mapping found for MAC, showing fields read-only");
+//         Toast.makeText(this, "Mapping found for MAC", Toast.LENGTH_SHORT).show();
+//     } else {
+//         patientInput.setEnabled(true);
+//         shimmer1Input.setEnabled(true);
+//         shimmer2Input.setEnabled(true);
+//         Log.d("MapButton", "No mapping found, enabling input fields");
+//         Toast.makeText(this, "No mapping found. Enter patient and shimmer info.", Toast.LENGTH_SHORT).show();
+//     }
+
+//     AlertDialog.Builder builder = new AlertDialog.Builder(this)
+//             .setTitle("Map Device to Patient")
+//             .setView(layout)
+//             .setNegativeButton("Cancel", (d, w) -> d.dismiss());
+
+//     AlertDialog dialog;
+//     if (mappingFound) {
+//         builder.setPositiveButton("Close", (d, w) -> d.dismiss());
+//         dialog = builder.create();
+//     } else {
+//         builder.setPositiveButton("Save", null);
+//         dialog = builder.create();
+//         dialog.setOnShowListener(d -> {
+//             Button saveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+//             saveButton.setOnClickListener(v -> {
+//                 String patientVal = patientInput.getText().toString().trim();
+//                 String shimmer1Val = shimmer1Input.getText().toString().trim();
+//                 String shimmer2Val = shimmer2Input.getText().toString().trim();
+//                 if (patientVal.isEmpty()) {
+//                     Toast.makeText(this, "Patient name required", Toast.LENGTH_SHORT).show();
+//                     return;
+//                 }
+//                 putMapping(mac, patientVal, shimmer1Val, shimmer2Val, dialog);
+//             });
+//         });
+//     }
+//     dialog.show();
+
+//     // Call getMapping to show response fields
+//     getMapping(mac, patientInput, shimmer1Input, shimmer2Input, macInput, updatedAtView, dialog);
+// }
+
+
+private void getMapping(String mac, EditText patientInput, EditText shimmer1Input, EditText shimmer2Input, TextView updatedAtView, boolean readOnly) {
+    new Thread(() -> {
         try {
-            String urlStr = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/ddb/device-patient-map/" + URLEncoder.encode(mac, "UTF-8");
+            String urlStr = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/ddb/device-patient-map/"
+                    + URLEncoder.encode(mac, "UTF-8");
             HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("accept", "application/json");
             conn.setConnectTimeout(10000);
             conn.setReadTimeout(15000);
-            int code = conn.getResponseCode();
-            if (code == 200) {
+
+            if (conn.getResponseCode() == 200) {
                 BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
                 StringBuilder sb = new StringBuilder();
-                String line; while ((line = br.readLine()) != null) sb.append(line);
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
                 String resp = sb.toString();
-                String name = parseNameFromResponse(resp, mac);
+
                 runOnUiThread(() -> {
-                    if (name != null && !name.isEmpty()) {
-                        nameInput.setText(name);
-                        nameInput.setEnabled(false);
-                        macInput.setEnabled(false);
-                        // Change Save to Close
-                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setText("Close");
-                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> dialog.dismiss());
-                    } else {
-                        nameInput.setEnabled(true);
-                        macInput.setEnabled(true);
-                        // Keep Save behavior
+                    try {
+                        JSONObject obj = new JSONObject(resp);
+
+                        patientInput.setText(obj.optString("patient", ""));
+                        shimmer1Input.setText(obj.optString("shimmer1", ""));
+                        shimmer2Input.setText(obj.optString("shimmer2", ""));
+                        updatedAtView.setText("Last Updated: " + obj.optString("updatedAt", ""));
+
+                        if (readOnly) {
+                            patientInput.setEnabled(false);
+                            shimmer1Input.setEnabled(false);
+                            shimmer2Input.setEnabled(false);
+                        }
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Parse error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                     }
-                });
-            } else {
-                runOnUiThread(() -> {
-                    nameInput.setEnabled(true);
-                    macInput.setEnabled(true);
                 });
             }
         } catch (Exception e) {
-            runOnUiThread(() -> {
-                nameInput.setEnabled(true);
-                macInput.setEnabled(true);
-            });
+            runOnUiThread(() -> Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show());
         }
-    }
+    }).start();
+}
 
-    private void putMapping(String mac, String name, AlertDialog dialog) {
-        try {
-            String urlStr = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/ddb/device-patient-map";
-            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-            conn.setRequestMethod("PUT");
-            conn.setRequestProperty("accept", "application/json");
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(15000);
-            conn.setDoOutput(true);
-            // Body per requirement: { "mac":"name" }
-            JSONObject body = new JSONObject();
-            body.put(mac, name);
-            byte[] out = body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            try (OutputStream os = conn.getOutputStream()) { os.write(out); }
-            int code = conn.getResponseCode();
-            runOnUiThread(() -> {
-                if (code >= 200 && code < 300) {
-                    Toast.makeText(this, "Mapping saved", Toast.LENGTH_SHORT).show();
-                    dialog.dismiss();
-                } else {
-                    Toast.makeText(this, "Save failed (" + code + ")", Toast.LENGTH_SHORT).show();
-                }
-            });
-        } catch (Exception e) {
-            runOnUiThread(() -> Toast.makeText(this, "Error saving: " + e.getMessage(), Toast.LENGTH_SHORT).show());
-        }
+
+// Update getMapping signature and usage
+// private void getMapping(String mac, EditText patientInput, EditText shimmer1Input, EditText shimmer2Input, EditText macInput, TextView updatedAtView, AlertDialog dialog) {
+//     new Thread(() -> {
+//         try {
+//             String urlStr = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/ddb/device-patient-map/" + URLEncoder.encode(mac, "UTF-8");
+//             HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+//             conn.setRequestMethod("GET");
+//             conn.setRequestProperty("accept", "application/json");
+//             conn.setConnectTimeout(10000);
+//             conn.setReadTimeout(15000);
+//             int code = conn.getResponseCode();
+//             String resp = "";
+//             if (code == 200) {
+//                 BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+//                 StringBuilder sb = new StringBuilder();
+//                 String line; while ((line = br.readLine()) != null) sb.append(line);
+//                 resp = sb.toString();
+//             }
+//             final String finalResp = resp;
+//             runOnUiThread(() -> {
+//                 // Parse and display fields if JSON
+//                 try {
+//                     JSONObject obj = new JSONObject(finalResp);
+//                     if (obj.has("patient")) patientInput.setText(obj.optString("patient", ""));
+//                     if (obj.has("shimmer1")) shimmer1Input.setText(obj.optString("shimmer1", ""));
+//                     if (obj.has("shimmer2")) shimmer2Input.setText(obj.optString("shimmer2", ""));
+//                     if (obj.has("updatedAt")) updatedAtView.setText("Last Updated: " + obj.optString("updatedAt", ""));
+//                 } catch (Exception ignored) {}
+//             });
+//         } catch (Exception e) {
+//             runOnUiThread(() -> {
+//                 Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+//             });
+//         }
+//     }).start();
+// }
+
+private void putMapping(String mac, String patient, String shimmer1, String shimmer2, AlertDialog dialog) {
+        new Thread(() -> {
+            try {
+                String urlStr = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/ddb/device-patient-map/" + java.net.URLEncoder.encode(mac, "UTF-8");
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(urlStr).openConnection();
+                conn.setRequestMethod("PUT");
+                conn.setRequestProperty("accept", "application/json");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(15000);
+                conn.setDoOutput(true);
+                org.json.JSONObject body = new org.json.JSONObject();
+                body.put("patient", patient);
+                if (shimmer1 != null && !shimmer1.isEmpty()) body.put("shimmer1", shimmer1);
+                if (shimmer2 != null && !shimmer2.isEmpty()) body.put("shimmer2", shimmer2);
+                byte[] out = body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                try (java.io.OutputStream os = conn.getOutputStream()) { os.write(out); }
+                int code = conn.getResponseCode();
+                runOnUiThread(() -> {
+                    if (code >= 200 && code < 300) {
+                        Toast.makeText(this, "Mapping saved", Toast.LENGTH_SHORT).show();
+                        dialog.dismiss();
+                    } else {
+                        Toast.makeText(this, "Save failed (" + code + ")", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(this, "Error saving: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+            }
+        }).start();
     }
 
     private String parseNameFromResponse(String resp, String mac) {

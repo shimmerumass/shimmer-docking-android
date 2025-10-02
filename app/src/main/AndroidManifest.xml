@@ -87,6 +87,18 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             tools:ignore="ForegroundServicePermission" />
+     <!-- DeviceAdminReceiver registration for kiosk/lock task mode -->
+     <receiver
+             android:name=".ShimmerDeviceAdminReceiver"
+             android:permission="android.permission.BIND_DEVICE_ADMIN"
+             android:exported="true">
+                        <meta-data
+                                android:name="android.app.device_admin"
+                                android:resource="@xml/device_admin_receiver" />
+                        <intent-filter>
+                                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                        </intent-filter>
+     </receiver>
     </application>
 </manifest>
 
