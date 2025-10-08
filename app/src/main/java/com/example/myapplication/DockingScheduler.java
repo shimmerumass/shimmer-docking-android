@@ -40,6 +40,11 @@ public class DockingScheduler {
         int endHour = (startHour + 5) % 24;
         int endMinute = startMinute;
 
+        // Testing
+        // int endMinute = (startMinute + 5) % 60;
+        // int endHour   = (startHour + (startMinute + 5) / 60) % 24;
+
+
         // Schedule START at user-selected hour
         Calendar startTime = Calendar.getInstance();
         startTime.set(Calendar.HOUR_OF_DAY, startHour);
