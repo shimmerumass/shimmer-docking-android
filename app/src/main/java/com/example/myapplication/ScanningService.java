@@ -40,7 +40,7 @@ public class ScanningService extends Service {
     private static final long SCAN_DURATION_MS = 15 * 1000;                 // 15 sec scan
     private static final long SCAN_INTERVAL_MS = 2 * 60 * 1000;               // 2 min interval for extended search scans
     private static final long EXTENDED_SEARCH_TOTAL_MS = 30 * 60 * 1000;      // total extended search period = 30 min
-    private static final long SLEEP_30_MIN_MS = 3 * 60 * 1000;               // sleep 30 minutes if device found
+    private static final long SLEEP_30_MIN_MS = 30 * 60 * 1000;               // sleep 30 minutes if device found
     private static final long SLEEP_20_MIN_MS = 20 * 60 * 1000;               // sleep 20 minutes if no device found in extended search
 
     private long scanStartTime = 0;
