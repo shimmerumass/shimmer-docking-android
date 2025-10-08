@@ -9,7 +9,7 @@ public class DockingStartReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (!"com.example.myapplication.START_DOCKING".equals(intent.getAction())) return;
-        Log.d("DockingStartReceiver", "Alarm fired. Starting DockingService and scheduling next day.");
+        Log.d("DockingStartReceiver", "Alarm fired. Starting DockingService.");
 
         // Start service
         Intent serviceIntent = new Intent(context, DockingService.class);
