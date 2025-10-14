@@ -16,6 +16,28 @@ A lightweight Android app that discovers Shimmer devices at night, determines do
 
 Open in Android Studio and build the `app` module. Ensure required permissions are granted at runtime (Bluetooth, Notifications on Android 13+). For CLI builds, use the included Gradle wrapper.
 
+### Build configuration (app/build.gradle)
+- Plugins: `com.android.application`, `com.google.gms.google-services`, `com.google.firebase.crashlytics`
+- Namespace: `com.example.myapplication`
+- defaultConfig:
+  - applicationId: `com.example.myapplication`
+  - versionCode: 1, versionName: 1.0
+- compileOptions: Java 11 (source/target)
+
+Dependencies of note:
+- Firebase BoM and SDKs
+  - platform("com.google.firebase:firebase-bom:33.15.0")
+  - com.google.firebase:firebase-analytics
+  - com.google.firebase:firebase-crashlytics:18.4.3
+  - (also present earlier: BoM 33.14.0 — prefer to keep a single BoM line; see note below)
+- AndroidX: appcompat, activity, constraintlayout, material 1.11.0
+- Networking/Utils: okhttp 4.12.0, org.json 20240303
+
+Notes:
+- The file currently includes two Firebase BoM declarations (33.14.0 and 33.15.0). Use one BoM line (keep the latest 33.15.0) to avoid ambiguity.
+- google-services.json must be present under `app/` (it already is) for Analytics/Crashlytics to initialize.
+- The Google Services and Crashlytics Gradle plugins are already applied at the top of `app/build.gradle`.
+
 ## Protocol Highlights
 - Bluetooth RFCOMM UUID: 00001101-0000-1000-8000-00805F9B34FB
 - Dock query:
