@@ -653,11 +653,11 @@ public class DockingManager {
                 int rtcRead = in.read(rtcBytes);
                 long shimmerRtc = 0L;
                 if (rtcRead == 8) {
-                    // Convert 8 bytes to long (big-endian)
-                    for (int i = 0; i < 8; i++) {
+                    // Correctly interpret as little-endian
+                    for (int i = 7; i >= 0; i--) {
                         shimmerRtc = (shimmerRtc << 8) | (rtcBytes[i] & 0xFF);
                     }
-                } else {
+                }else {
                     Log.e(TAG, "Failed to read shimmer RTC64, got " + rtcRead + " bytes");
                     Log.d(TAG, "[RTC-STORE] RTC64 read failed, shimmerRtc64 NOT stored for MAC " + macAddress);
                 }
