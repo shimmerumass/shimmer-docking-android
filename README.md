@@ -84,11 +84,6 @@ High-level map of important classes and responsibilities. Class names refer to f
 - DockingTimestampModel
   - Simple model to carry `shimmerRtc64` and `androidRtc32` through the pipeline
 
-## Logging Conventions
-- [RTC-RAW] Raw 8 bytes from Shimmer (hex, LSB..MSB)
-- [RTC-DECODE] Decoded uint64 + approximate seconds (rtc/32768.0)
-- [RTC-STORE] When and where we store the timestamps
-- [HeaderVerify] After writing headers, we read them back and log to ensure correctness
 
 ## Permissions
 - BLUETOOTH_SCAN, BLUETOOTH_CONNECT
@@ -104,3 +99,6 @@ High-level map of important classes and responsibilities. Class names refer to f
 - Optionally push other branches/tags to new repo; apply branch protections
 - Add unit tests for byte-order decoding and header verification
 - Add a settings screen to adjust timing windows and retry limits
+
+## License
+This project is licensed under the MIT License. See the `LICENSE` file for details.
