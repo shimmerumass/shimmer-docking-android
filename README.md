@@ -39,7 +39,6 @@ Notes:
 - The Google Services and Crashlytics Gradle plugins are already applied at the top of `app/build.gradle`.
 
 ## Protocol Highlights
-- Bluetooth RFCOMM UUID: 00001101-0000-1000-8000-00805F9B34FB
 - Dock query:
   - Host → Shimmer: 0xD5 (CHECK_DOCK_STATE)
   - Shimmer → Host: 0xD6 (RESPONSE_DOCK_STATE), then 1 status byte (0=undocked, 1=docked) and 8 bytes of RTC64
