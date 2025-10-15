@@ -185,7 +185,11 @@ public class ShimmerFileTransferClient {
             if (fileCount <= 0) {
                 Log.e(TAG, "No files available for transfer");
                 crashlytics.log("No files available for transfer");
-                return; // do NOT send TRANSFER_DONE
+                // Send TRANSFER_DONE broadcast even if no files
+                Intent doneIntent = new Intent("com.example.myapplication.TRANSFER_DONE");
+                doneIntent.setPackage(context.getPackageName());
+                context.sendBroadcast(doneIntent);
+                return;
             }
 
             // --- STEP 3: Transfer Each File ---
