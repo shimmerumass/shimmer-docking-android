@@ -1343,90 +1343,6 @@ private void showDevicePatientMapDialog(String mac, String existingName, boolean
     dialog.show();
 }
 
-
-// private void showDevicePatientMapDialog(String mac, String existingName, boolean mappingFound) {
-//     Log.d("MapButton", "showDevicePatientMapDialog: mac=" + mac + ", mappingFound=" + mappingFound);
-//     LinearLayout layout = new LinearLayout(this);
-//     layout.setOrientation(LinearLayout.VERTICAL);
-//     int pad = (int) (16 * getResources().getDisplayMetrics().density);
-//     layout.setPadding(pad, pad, pad, 0);
-
-//     EditText macInput = new EditText(this);
-//     macInput.setHint("Device MAC");
-//     macInput.setText(mac);
-//     macInput.setEnabled(false);
-//     layout.addView(macInput);
-
-//     EditText patientInput = new EditText(this);
-//     patientInput.setHint("Patient name");
-//     layout.addView(patientInput);
-
-//     EditText shimmer1Input = new EditText(this);
-//     shimmer1Input.setHint("Shimmer 1");
-//     layout.addView(shimmer1Input);
-
-//     EditText shimmer2Input = new EditText(this);
-//     shimmer2Input.setHint("Shimmer 2");
-//     layout.addView(shimmer2Input);
-
-//     TextView updatedAtView = new TextView(this);
-//     updatedAtView.setHint("Last Updated");
-//     updatedAtView.setPadding(0, pad, 0, 0);
-//     layout.addView(updatedAtView);
-
-//     // REMOVE or comment out the rawResponseView
-//     // TextView rawResponseView = new TextView(this);
-//     // rawResponseView.setHint("Raw Response");
-//     // rawResponseView.setPadding(0, pad, 0, 0);
-//     // layout.addView(rawResponseView);
-
-//     if (mappingFound) {
-//         patientInput.setEnabled(false);
-//         shimmer1Input.setEnabled(false);
-//         shimmer2Input.setEnabled(false);
-//         Log.d("MapButton", "Mapping found for MAC, showing fields read-only");
-//         Toast.makeText(this, "Mapping found for MAC", Toast.LENGTH_SHORT).show();
-//     } else {
-//         patientInput.setEnabled(true);
-//         shimmer1Input.setEnabled(true);
-//         shimmer2Input.setEnabled(true);
-//         Log.d("MapButton", "No mapping found, enabling input fields");
-//         Toast.makeText(this, "No mapping found. Enter patient and shimmer info.", Toast.LENGTH_SHORT).show();
-//     }
-
-//     AlertDialog.Builder builder = new AlertDialog.Builder(this)
-//             .setTitle("Map Device to Patient")
-//             .setView(layout)
-//             .setNegativeButton("Cancel", (d, w) -> d.dismiss());
-
-//     AlertDialog dialog;
-//     if (mappingFound) {
-//         builder.setPositiveButton("Close", (d, w) -> d.dismiss());
-//         dialog = builder.create();
-//     } else {
-//         builder.setPositiveButton("Save", null);
-//         dialog = builder.create();
-//         dialog.setOnShowListener(d -> {
-//             Button saveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-//             saveButton.setOnClickListener(v -> {
-//                 String patientVal = patientInput.getText().toString().trim();
-//                 String shimmer1Val = shimmer1Input.getText().toString().trim();
-//                 String shimmer2Val = shimmer2Input.getText().toString().trim();
-//                 if (patientVal.isEmpty()) {
-//                     Toast.makeText(this, "Patient name required", Toast.LENGTH_SHORT).show();
-//                     return;
-//                 }
-//                 putMapping(mac, patientVal, shimmer1Val, shimmer2Val, dialog);
-//             });
-//         });
-//     }
-//     dialog.show();
-
-//     // Call getMapping to show response fields
-//     getMapping(mac, patientInput, shimmer1Input, shimmer2Input, macInput, updatedAtView, dialog);
-// }
-
-
 private void getMapping(String mac, EditText patientInput, EditText shimmer1Input, EditText shimmer2Input, TextView updatedAtView, boolean readOnly) {
     new Thread(() -> {
         try {
@@ -1471,42 +1387,6 @@ private void getMapping(String mac, EditText patientInput, EditText shimmer1Inpu
 }
 
 
-// Update getMapping signature and usage
-// private void getMapping(String mac, EditText patientInput, EditText shimmer1Input, EditText shimmer2Input, EditText macInput, TextView updatedAtView, AlertDialog dialog) {
-//     new Thread(() -> {
-//         try {
-//             String urlStr = "https://odb777ddnc.execute-api.us-east-2.amazonaws.com/ddb/device-patient-map/" + URLEncoder.encode(mac, "UTF-8");
-//             HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-//             conn.setRequestMethod("GET");
-//             conn.setRequestProperty("accept", "application/json");
-//             conn.setConnectTimeout(10000);
-//             conn.setReadTimeout(15000);
-//             int code = conn.getResponseCode();
-//             String resp = "";
-//             if (code == 200) {
-//                 BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-//                 StringBuilder sb = new StringBuilder();
-//                 String line; while ((line = br.readLine()) != null) sb.append(line);
-//                 resp = sb.toString();
-//             }
-//             final String finalResp = resp;
-//             runOnUiThread(() -> {
-//                 // Parse and display fields if JSON
-//                 try {
-//                     JSONObject obj = new JSONObject(finalResp);
-//                     if (obj.has("patient")) patientInput.setText(obj.optString("patient", ""));
-//                     if (obj.has("shimmer1")) shimmer1Input.setText(obj.optString("shimmer1", ""));
-//                     if (obj.has("shimmer2")) shimmer2Input.setText(obj.optString("shimmer2", ""));
-//                     if (obj.has("updatedAt")) updatedAtView.setText("Last Updated: " + obj.optString("updatedAt", ""));
-//                 } catch (Exception ignored) {}
-//             });
-//         } catch (Exception e) {
-//             runOnUiThread(() -> {
-//                 Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-//             });
-//         }
-//     }).start();
-// }
 
 private void putMapping(String mac, String patient, String shimmer1, String shimmer2, AlertDialog dialog) {
         new Thread(() -> {
