@@ -1,4 +1,4 @@
-# Shimmer Docking Android App
+# Shimmer Sensor Docking & Data Sync App
 
 ## Quick Navigation
 
