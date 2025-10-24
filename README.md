@@ -223,9 +223,18 @@ To build and run:
 
 ## 8. Permissions
 
-- BLUETOOTH_SCAN, BLUETOOTH_CONNECT
-- ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION (required for scanning on some Android versions)
-- POST_NOTIFICATIONS (required for notifications on Android 13+)
+| Permission                | Purpose/Usage                                                      | Required For                |
+|---------------------------|--------------------------------------------------------------------|-----------------------------|
+| BLUETOOTH_SCAN            | Scanning for Bluetooth devices                                     | Device discovery            |
+| BLUETOOTH_CONNECT         | Connecting to Bluetooth devices                                   | File transfer, communication|
+| ACCESS_FINE_LOCATION      | Required for Bluetooth scanning on some Android versions           | Device discovery            |
+| ACCESS_COARSE_LOCATION    | Required for Bluetooth scanning on some Android versions           | Device discovery            |
+| POST_NOTIFICATIONS        | Required for notifications on Android 13+                         | User notifications          |
+
+**Note:**
+- Location permissions (`ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`) are needed for Bluetooth scanning due to Android security requirements.
+- `POST_NOTIFICATIONS` is only required for Android 13 and above.
+- All permissions must be granted at runtime for full protocol operation.
 
 
 ## 9. Usage Notes
