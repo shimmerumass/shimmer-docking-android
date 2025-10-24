@@ -263,6 +263,8 @@ The main screen guides users through the nightly docking and sync protocol. The 
 6. Errors, status, and docking state are always visible. The app uses silent backoff and retry for failures.
 7. Additional controls allow mapping devices to patients, changing docking hours, toggling theme, and viewing app info.
 
+---
+
 ### 11.2 Main Buttons
 
 - **Start Docking** (`dockingButton`): Begins the scan and monitoring protocol for Shimmer devices.
@@ -272,6 +274,8 @@ The main screen guides users through the nightly docking and sync protocol. The 
 - **Theme Toggle** (`themeToggleButton`): Switches between light and dark UI themes.
 - **About** (`aboutButton`): Displays app information, version, and usage instructions.
 - **Change Docking Hours** (`changeDockingHoursButton`): Adjusts the time window for automatic docking operations.
+
+---
 
 ### 11.3 Status and Progress
 
