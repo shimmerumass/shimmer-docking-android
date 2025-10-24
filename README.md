@@ -22,8 +22,7 @@
   - [Main Buttons](#112-main-buttons)
   - [Status and Progress](#113-status-and-progress)
   - [Main Screen Layout and Components](#114-main-screen-layout-and-components)
-  - [UI Component Mapping](#115-ui-component-mapping)
-  - [UI Flow and Interactions](#116-ui-flow-and-interactions)
+  - [UI Flow and Interactions](#115-ui-flow-and-interactions)
 - [License](#12-license)
 - [Appendix](#13-appendix)
   - [Protocol Details](#131-protocol-details)
@@ -320,31 +319,7 @@ The main UI is defined in `activity_main.xml` and is designed for clarity, acces
 
 ---
 
-### 11.5 UI Component Mapping
-
-| UI Element                   | XML ID                      | Purpose/Functionality                                      |
-|------------------------------|-----------------------------|------------------------------------------------------------|
-| Theme Toggle Button          | `themeToggleButton`         | Switches between light/dark themes                         |
-| About Button                 | `aboutButton`               | Shows app info and instructions                            |
-| Map Device to Patient Button | `mapButton`                 | Opens device-patient mapping workflow                      |
-| Welcome Text                 | `user_name_text_view`       | Displays welcome/user name                                 |
-| Timer Text                   | `timerText`                 | Shows remaining protocol time                              |
-| Status Text                  | `statusText`                | Displays current protocol status                           |
-| Docking Status Text          | `dockingStatusText`         | Shows docking state for each device                        |
-| Device List                  | `deviceListView`            | Lists available Shimmer devices                            |
-| Transfer Progress Text       | `progressText`              | Shows file transfer progress                               |
-| Transfer Progress Bar        | `transferProgressBar`       | Progress indicator for file transfer                       |
-| Files to Sync Section        | `filesToSyncSection`        | Card for files queued for cloud sync                       |
-| File List                    | `fileListRecyclerView`      | Lists files ready to sync                                  |
-| Start Transfer Button        | `transferButton`            | Initiates file transfer                                    |
-| Sync to Cloud Button         | `syncButton`                | Uploads files to cloud endpoint                            |
-| Start Docking Button         | `dockingButton`             | Begins scan/monitoring protocol                            |
-| Docking Hours Text           | `dockingHoursText`          | Shows current docking hours window                         |
-| Change Docking Hours Button  | `changeDockingHoursButton`  | Adjusts docking hours                                      |
-
----
-
-### 11.6 UI Flow and Interactions
+### 11.5 UI Flow and Interactions
 
 1. **Protocol Start**: User presses "Start Docking" or protocol starts automatically. Timer and status update; device scan begins.
 2. **Device Discovery**: Available devices appear in the list. Docking state is shown for each.
