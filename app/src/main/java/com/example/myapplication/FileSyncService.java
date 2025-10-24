@@ -44,8 +44,8 @@ public class FileSyncService extends Service {
         new Thread(() -> {
             try {
                 updateNotif("Syncing to cloud...");
-                if (!isWifiConnected()) {
-                    updateNotif("Wi‑Fi is OFF. Will sync next cycle.");
+                if (!isNetworkConnected()) {
+                    updateNotif("No internet (Wi-Fi or mobile data). Will sync next cycle.");
                     // No retries and no UI broadcasts; just stop
                     stopSelf();
                     return;
@@ -67,17 +67,18 @@ public class FileSyncService extends Service {
         return START_STICKY;
     }
 
-    private boolean isWifiConnected() {
+    private boolean isNetworkConnected() {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm == null) return false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             android.net.Network nw = cm.getActiveNetwork();
             if (nw == null) return false;
             NetworkCapabilities nc = cm.getNetworkCapabilities(nw);
-            return nc != null && nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
+            return nc != null && (nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                || nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
         } else {
             android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
-            return ni != null && ni.isConnected() && ni.getType() == ConnectivityManager.TYPE_WIFI;
+            return ni != null && ni.isConnected() && (ni.getType() == ConnectivityManager.TYPE_WIFI || ni.getType() == ConnectivityManager.TYPE_MOBILE);
         }
     }
 
