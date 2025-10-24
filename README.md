@@ -230,10 +230,13 @@ To build and run:
 | ACCESS_FINE_LOCATION      | Required for Bluetooth scanning on some Android versions           | Device discovery            |
 | ACCESS_COARSE_LOCATION    | Required for Bluetooth scanning on some Android versions           | Device discovery            |
 | POST_NOTIFICATIONS        | Required for notifications on Android 13+                         | User notifications          |
+| INTERNET                  | Allows network access for cloud sync and API calls                 | Cloud sync, mapping, updates|
+| ACCESS_NETWORK_STATE      | Checks network connectivity status                                | Cloud sync, error handling  |
 
 **Note:**
 - Location permissions (`ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`) are needed for Bluetooth scanning due to Android security requirements.
 - `POST_NOTIFICATIONS` is only required for Android 13 and above.
+- `INTERNET` and `ACCESS_NETWORK_STATE` are required for cloud sync, device mapping, and network checks.
 - All permissions must be granted at runtime for full protocol operation.
 
 
