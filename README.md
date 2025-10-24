@@ -148,6 +148,11 @@ The codebase is organized around several key classes and services:
 - **Broadcast Receivers**: Includes receivers for system and app events, such as boot completion and docking flow triggers.
 - **DockingTimestampModel**: Encapsulates the RTC values for each device and session.
 
+<p align="center"> 
+ <img src="./architecture.png" width="900" height="300"> <br/>
+  <b>Figure: Shimmer Data Sync API Architecture</b>
+</p>
+
 
 
 ## 6. Protocol Details
