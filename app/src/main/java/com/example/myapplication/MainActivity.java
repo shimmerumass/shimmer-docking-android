@@ -1050,9 +1050,8 @@ public class MainActivity extends AppCompatActivity {
             "2. <b>Dock your Shimmer sensor(s) before the configured overnight window</b> (default: 8pm–9am). You can configure the window to suit your schedule.<br>" +
             "3. The app will automatically scan, detect, and transfer data from docked sensors.<br>" +
             "4. Transferred files are listed in 'Files to Sync.'<br>" +
-            "5. Tap 'Sync to Cloud' to upload files to the secure cloud endpoint.<br>" +
-            "6. Use 'Map Device to Patient' to associate sensors with patient records (requires internet).<br>" +
-            "7. Adjust docking hours, toggle theme, or view app info using the top bar buttons.<br><br>" +
+            "5. Use 👤 button to associate sensors with your mobile device.<br>" +
+            "6. Adjust docking hours, toggle theme ☀️, or view app info ℹ️ using the top bar buttons.<br><br>" +
             "<b>Important Reminders:</b><br>" +
             "<b>• Do not remove the sensors until the transfer is complete.</b><br>" +
             "<b>• Do not switch off the sensors during transfer.</b><br>" +
