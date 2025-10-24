@@ -1042,20 +1042,29 @@ public class MainActivity extends AppCompatActivity {
     private void showAboutDialog() {
         ScrollView scrollView = new ScrollView(this);
         TextView aboutText = new TextView(this);
-        aboutText.setText(
-                "About Shimmer Sensor App\n\n" +
-                        "This app helps you connect to your Shimmer sensor, transfer files, and sync data to the cloud.\n\n" +
-                        "How to Operate:\n" +
-                        "1. Make sure Bluetooth is enabled on your device.\n" +
-                        "2. Tap 'Start Transfer' to begin transferring sensor data.\n" +
-                        "3. Tap 'Sync to Cloud' to upload files.\n" +
-                        "4. Tap 'Start Docking' to connect to a docked sensor.\n\n" +
-                        "Accessibility:\n" +
-                        "- Large buttons and text for easy use.\n" +
-                        "- High contrast colors for readability.\n" +
-                        "- Designed for older adults and stroke patients.\n\n" +
-                        "If you need help, ask a caregiver or family member."
-        );
+        aboutText.setText(android.text.Html.fromHtml(
+            "<b>About Shimmer Sensor Docking & Data Sync App</b><br><br>" +
+            "This app automates nightly docking, data transfer, and secure cloud sync for Shimmer sensor devices. It is designed for research, clinical, and deployment environments where reliability and minimal user intervention are essential.<br><br>" +
+            "<b>How to Use:</b><br>" +
+            "1. Ensure Bluetooth is enabled and permissions are granted.<br>" +
+            "2. <b>Dock your Shimmer sensor(s) before the configured overnight window</b> (default: 8pm–9am). You can configure the window to suit your schedule.<br>" +
+            "3. The app will automatically scan, detect, and transfer data from docked sensors.<br>" +
+            "4. Transferred files are listed in 'Files to Sync.'<br>" +
+            "5. Tap 'Sync to Cloud' to upload files to the secure cloud endpoint.<br>" +
+            "6. Use 'Map Device to Patient' to associate sensors with patient records (requires internet).<br>" +
+            "7. Adjust docking hours, toggle theme, or view app info using the top bar buttons.<br><br>" +
+            "<b>Important Reminders:</b><br>" +
+            "<b>• Do not remove the sensors until the transfer is complete.</b><br>" +
+            "<b>• Do not switch off the sensors during transfer.</b><br>" +
+            "<b>• Always dock the sensors before your chosen window starts.</b><br><br>" +
+            "<b>Features:</b><br>" +
+            "- Automated scan, docking detection, file transfer, and cloud sync.<br>" +
+            "- Manual controls for transfer, sync, and device mapping.<br>" +
+            "- Real-time status, progress, and error reporting.<br>" +
+            "- Accessibility: Large buttons, high-contrast UI, and simple navigation.<br>" +
+            "- Designed for older adults, patients, and caregivers.<br><br>" +
+            "For help, ask a caregiver or family member."
+        ));
         aboutText.setPadding(32, 32, 32, 32);
         aboutText.setTextSize(18f);
         scrollView.addView(aboutText);
