@@ -1,6 +1,6 @@
-# Shimmer Docking Android
+# Shimmer Docking Android App
 
----
+
 
 ## Quick Navigation
 
