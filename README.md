@@ -1,6 +1,3 @@
-
-
-
 # Shimmer Docking Android
 
 ---
@@ -82,6 +79,20 @@ Shimmer Docking Android is a specialized application designed to automate the ni
 
 This app was designed for robust, unattended nightly operation in research and deployment settings where reliability and minimal user intervention are essential. The protocol is intentionally sequential and state-driven, with silent backoff and retry logic to avoid repeated failures and user disruption. Limiting the session to two devices ensures predictable resource usage and simplifies error handling, but this can be adjusted as needed.
 
+### Docking Protocol: Overnight Design and Scheduling
+
+Docking is intended to occur overnight, typically within a configurable time window (e.g., 20:00 to 09:00). This ensures that data collection and transfer happen when devices are docked and users are not actively using them. The protocol is triggered automatically by scheduled alarms and can also be started manually via the UI.
+
+#### Automatic Scheduling: Alarm and Receivers
+- **DockingStartReceiver**: Listens for scheduled alarm events (set by `DockingScheduler`) to begin the docking protocol at the start of the overnight window.
+- **DockingEndReceiver**: Listens for the end-of-window alarm to gracefully terminate the protocol and finalize any pending transfers or syncs.
+- **BootCompletedReceiver**: Ensures alarms and scheduling are re-registered after device reboot, maintaining reliability.
+- **DockingScheduler**: Manages alarm setup for start/end times, using Android's alarm manager for precise overnight scheduling.
+
+This design allows the app to run the docking protocol automatically every night, minimizing user intervention and ensuring consistent data collection.
+
+#### Manual Control: UI Button
+- **Start Docking Button**: Users can manually trigger the docking protocol at any time, outside the scheduled window, for troubleshooting or ad-hoc transfers. This provides flexibility while maintaining the reliability of the automatic overnight process.
 
 ### Device Ownership and Phone Lock State
 
@@ -128,15 +139,39 @@ The codebase is organized around several key classes and services:
 - **DockingTimestampModel**: Encapsulates the RTC values for each device and session.
 
 
+
 ## 6. Protocol Details
 
 ### 6.1 Dock Query
 
+The Dock Query protocol is used to determine the docking state and timestamp of a Shimmer device. The Android app (via `DockingManager` and related services) sends a command to the device:
+
+- **Command:** 0xD5 (CHECK_DOCK_STATE)
+- **Response:** 0xD6 (RESPONSE_DOCK_STATE), followed by:
+    - 1 status byte (0 = undocked, 1 = docked)
+    - 8 bytes of RTC64 timestamp (device clock, little-endian)
+
+This exchange is handled by the `DockingManager` and `DockingService`, which monitor the device and log the docking state and timestamp for each session. The status byte is used to decide whether to proceed with file transfer.
 
 ### 6.2 RTC64 Decoding
 
+The RTC64 value is an 8-byte unsigned integer representing the device's clock ticks. It is sent in little-endian format and must be decoded for use in file headers and logs.
+
+- **Decoding:**
+    - Read 8 bytes as a little-endian unsigned integer.
+    - To convert ticks to seconds: `seconds = rtc64 / 32768.0`
+
+This decoding is performed in the `DockingManager`, `ShimmerFileTransferClient`, and `DockingTimestampModel` classes. The decoded timestamp is used for traceability and to align device data with system events.
 
 ### 6.3 File Header Stamping
+
+During file transfer, the app stamps each file header with both the Shimmer device's RTC64 and the Android system's RTC32 timestamp. This ensures traceability and supports data integrity checks.
+
+- **Header Format:**
+    - Bytes 44–51: Shimmer RTC64 (little-endian)
+    - Bytes 52–55: Android RTC32 (system time in seconds, little-endian)
+
+The stamping is implemented in the `ShimmerFileTransferClient` and `TransferService` classes. RTC64 is obtained from the Dock Query, and RTC32 is read from the Android system clock at the time of transfer. These values allow for accurate alignment and verification of transferred data.
 
 
 ---
@@ -226,29 +261,83 @@ The main screen guides users through the nightly docking and sync protocol. The 
 
 The main screen of the app provides a clear overview of status, available devices, transfer progress, and key actions. Here is how the overall flow and buttons work:
 
-### Overall Flow
-1. The app can start the nightly protocol automatically or via user action.
-2. It scans for up to two Shimmer devices using Bluetooth and lists them in the "Available Devices" section.
-3. Each device is monitored for docking state, with status shown in the UI.
-4. When a device is docked, the app queries its state, reads the RTC timestamp, and starts a file transfer. Progress is shown in the "Transfer Progress" section.
-5. After successful transfer, files are queued for cloud sync and shown in the "Files to Sync" section. The app syncs files to S3 if network is available.
-6. If any step fails (e.g., Bluetooth off, device not found), the app enters a silent backoff period before retrying. Status and errors are displayed in the UI.
+---
 
-### Main Buttons
-- **Start Docking** (`dockingButton`): Manually triggers the docking protocol, starting the scan and monitoring process for Shimmer devices.
-- **Start Transfer** (`transferButton`): Initiates file transfer for the selected or docked device. This button is enabled when a device is ready for transfer.
-- **Sync to Cloud** (`syncButton`): Starts the cloud sync process for files that have been transferred but not yet uploaded. Enabled when files are available and network is connected.
-- **Map Device to Patient** (`mapButton`): Opens the device-patient mapping workflow, allowing you to associate a Shimmer device with a patient record (requires network).
-- **Theme Toggle** (`themeToggleButton`): Switches between light and dark UI themes.
-- **About** (`aboutButton`): Displays information about the app, version, and usage instructions.
-- **Change Docking Hours** (`changeDockingHoursButton`): Allows you to adjust the time window for automatic docking operations.
+### 11.4 Main Screen Layout and Components
 
-### Status and Progress
-- The UI displays timer, status, and docking state for each device.
-- Transfer progress and sync status are shown with progress bars and text.
-- Lists of available devices and files to sync are updated in real time.
+The main UI is defined in `activity_main.xml` and is designed for clarity, accessibility, and efficient workflow. The layout uses Material Design components and is organized as follows:
 
-This design ensures that users can monitor, control, and troubleshoot the protocol with minimal effort, while most operations run automatically in the background.
+#### Top Bar (Always Visible)
+- **Theme Toggle Button (`themeToggleButton`)**: Top-right, switches between light and dark themes.
+- **About Button (`aboutButton`)**: Top-right, shows app info and usage instructions.
+- **Map Device to Patient Button (`mapButton`)**: Top-right, opens device-patient mapping workflow.
+
+#### Welcome Card
+- **User Name Text (`user_name_text_view`)**: Centered welcome message, can display the logged-in user or generic greeting.
+
+#### Timer & Status Card
+- **Timer Text (`timerText`)**: Shows remaining time for the current protocol session.
+- **Status Text (`statusText`)**: Displays current protocol status (e.g., scanning, transferring, syncing).
+- **Docking Status Text (`dockingStatusText`)**: Shows docking state for each device (docked/undocked).
+
+#### Available Devices Section
+- **Title**: "Available Devices" (bold header).
+- **Device List (`deviceListView`)**: ListView showing up to two nearby Shimmer devices, with status and selection.
+
+#### Transfer Progress Section
+- **Progress Text (`progressText`)**: Shows transfer progress percentage.
+- **Transfer Progress Bar (`transferProgressBar`)**: Linear progress indicator for file transfer.
+
+#### Files to Sync Section
+- **Files to Sync Card (`filesToSyncSection`)**: Visible when files are queued for cloud sync.
+- **File List (`fileListRecyclerView`)**: ListView showing files ready to sync.
+
+#### Action Buttons (Bottom Row)
+- **Start Transfer (`transferButton`)**: Initiates file transfer for selected/docked device.
+- **Sync to Cloud (`syncButton`)**: Uploads transferred files to cloud endpoint.
+- **Start Docking (`dockingButton`)**: Begins scan and monitoring protocol.
+
+#### Docking Hours Section
+- **Docking Hours Text (`dockingHoursText`)**: Shows current docking hours window.
+- **Change Docking Hours Button (`changeDockingHoursButton`)**: Opens dialog to adjust docking hours.
+
+---
+
+### 11.5 UI Component Mapping
+
+| UI Element                   | XML ID                      | Purpose/Functionality                                      |
+|------------------------------|-----------------------------|------------------------------------------------------------|
+| Theme Toggle Button          | `themeToggleButton`         | Switches between light/dark themes                         |
+| About Button                 | `aboutButton`               | Shows app info and instructions                            |
+| Map Device to Patient Button | `mapButton`                 | Opens device-patient mapping workflow                      |
+| Welcome Text                 | `user_name_text_view`       | Displays welcome/user name                                 |
+| Timer Text                   | `timerText`                 | Shows remaining protocol time                              |
+| Status Text                  | `statusText`                | Displays current protocol status                           |
+| Docking Status Text          | `dockingStatusText`         | Shows docking state for each device                        |
+| Device List                  | `deviceListView`            | Lists available Shimmer devices                            |
+| Transfer Progress Text       | `progressText`              | Shows file transfer progress                               |
+| Transfer Progress Bar        | `transferProgressBar`       | Progress indicator for file transfer                       |
+| Files to Sync Section        | `filesToSyncSection`        | Card for files queued for cloud sync                       |
+| File List                    | `fileListRecyclerView`      | Lists files ready to sync                                  |
+| Start Transfer Button        | `transferButton`            | Initiates file transfer                                    |
+| Sync to Cloud Button         | `syncButton`                | Uploads files to cloud endpoint                            |
+| Start Docking Button         | `dockingButton`             | Begins scan/monitoring protocol                            |
+| Docking Hours Text           | `dockingHoursText`          | Shows current docking hours window                         |
+| Change Docking Hours Button  | `changeDockingHoursButton`  | Adjusts docking hours                                      |
+
+---
+
+### 11.6 UI Flow and Interactions
+
+1. **Protocol Start**: User presses "Start Docking" or protocol starts automatically. Timer and status update; device scan begins.
+2. **Device Discovery**: Available devices appear in the list. Docking state is shown for each.
+3. **Docking State Monitoring**: When a device is docked, status updates and transfer becomes available.
+4. **File Transfer**: "Start Transfer" button is enabled; progress bar and text show transfer status.
+5. **Files to Sync**: After transfer, files appear in "Files to Sync" section. "Sync to Cloud" button is enabled if network is available.
+6. **Cloud Sync**: User presses "Sync to Cloud"; progress and results are shown. Synced files are removed from the list.
+7. **Additional Controls**: User can map devices, change docking hours, toggle theme, or view app info at any time.
+
+All status, errors, and progress are visible in real time. The UI is designed for minimal manual intervention, with most operations running automatically in the background.
 
 
 ## 12. License
