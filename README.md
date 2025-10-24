@@ -82,20 +82,21 @@ Shimmer Docking Android is a specialized application designed to automate the ni
 
 This app was designed for robust, unattended nightly operation in research and deployment settings where reliability and minimal user intervention are essential. The protocol is intentionally sequential and state-driven, with silent backoff and retry logic to avoid repeated failures and user disruption. Limiting the session to two devices ensures predictable resource usage and simplifies error handling, but this can be adjusted as needed.
 
-### Device Ownership and Lock State
+
+### Device Ownership and Phone Lock State
 
 Each Shimmer device is assigned to a specific owner (e.g., patient, research subject, or deployment asset). This ownership model ensures:
 - **Data integrity:** Files and metadata are always associated with the correct device and owner, reducing risk of mix-ups.
 - **Auditability:** Ownership mapping allows for clear tracking of device usage, transfer history, and troubleshooting.
 - **Security:** Only authorized devices are processed, and mapping is enforced in the app workflow.
 
-The protocol uses a lock state (docked/undocked) to control when data transfer is allowed:
-- **Why lock state?**
-    - Prevents accidental or unauthorized file transfer when the device is not physically docked.
-    - Ensures that only devices in a known, stable state (docked) are queried and transferred, reducing errors and data corruption.
-    - Supports unattended operation by automating the decision to transfer only when conditions are met.
+The protocol also considers the phone's lock state (whether the phone is locked or unlocked) to control when data transfer and sync operations are allowed:
+- **Why phone lock state?**
+    - Prevents accidental or unauthorized file transfer when the phone is locked and unattended.
+    - Ensures that sensitive operations (file transfer, cloud sync, device mapping) only occur when the phone is unlocked and the user is present.
+    - Supports security and privacy by restricting access to patient/device data when the phone is locked.
 
-Lock state is determined by querying the device (0xD5/0xD6 protocol) and is logged for every session. This design choice provides a reliable trigger for file transfer and sync, and supports robust error handling if a device is undocked or unavailable.
+Phone lock state is checked before initiating transfer and sync actions. This design choice provides a reliable safeguard for data privacy and user control, and supports robust unattended operation by automating the decision to transfer only when the phone is unlocked and conditions are met.
 
 Key design choices include:
 - **Stateful protocol:** Each step (scan, monitor, query, transfer, sync) is tracked and logged, allowing for recovery and troubleshooting.
