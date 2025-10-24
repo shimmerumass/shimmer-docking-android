@@ -102,10 +102,12 @@ This design allows the app to run the docking protocol automatically every night
 
 ### 3.2 Device Ownership and Phone Lock State
 
-Each Shimmer device is assigned to a specific owner (e.g., patient, research subject, or deployment asset). This ownership model ensures:
+Each Shimmer device is assigned to a specific owner (e.g., patient, research subject, or deployment asset) in this implementation. This ownership model ensures:
 - **Data integrity:** Files and metadata are always associated with the correct device and owner, reducing risk of mix-ups.
 - **Auditability:** Ownership mapping allows for clear tracking of device usage, transfer history, and troubleshooting.
 - **Security:** Only authorized devices are processed, and mapping is enforced in the app workflow.
+
+> **Note:** This device-owner mapping is implemented for this project to support research and deployment needs. You do not need to use the same ownership model in your own application—adapt or omit as required for your use case.
 
 The protocol also considers the phone's lock state (whether the phone is locked or unlocked) to control when data transfer and sync operations are allowed:
 - **Why phone lock state?**
