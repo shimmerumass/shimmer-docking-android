@@ -255,7 +255,23 @@ public class MainActivity extends AppCompatActivity {
                 transferProgressBar.setVisibility(View.VISIBLE);
 
                 // Disable buttons and hide stop scanning during transfer
-                syncButton.setEnabled(false);
+                // Disable sync button if neither WiFi nor cellular is connected
+                android.net.ConnectivityManager cm = (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+                boolean networkConnected = false;
+                if (cm != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        android.net.Network nw = cm.getActiveNetwork();
+                        if (nw != null) {
+                            android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(nw);
+                            networkConnected = nc != null && (nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                                || nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR));
+                        }
+                    } else {
+                        android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
+                        networkConnected = ni != null && ni.isConnected() && (ni.getType() == android.net.ConnectivityManager.TYPE_WIFI || ni.getType() == android.net.ConnectivityManager.TYPE_MOBILE);
+                    }
+                }
+                syncButton.setEnabled(networkConnected);
                 transferButton.setEnabled(false);
 
 
@@ -428,6 +444,27 @@ public class MainActivity extends AppCompatActivity {
         fileListView = findViewById(R.id.fileListRecyclerView);
 
         syncButton.setOnClickListener(v -> {
+            // Minimal network connectivity check (WiFi or mobile data)
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            boolean networkConnected = false;
+            if (cm != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.net.Network nw = cm.getActiveNetwork();
+                    if (nw != null) {
+                        android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(nw);
+                        networkConnected = nc != null && (nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                            || nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR));
+                    }
+                } else {
+                    android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
+                    networkConnected = ni != null && ni.isConnected() && (ni.getType() == android.net.ConnectivityManager.TYPE_WIFI || ni.getType() == android.net.ConnectivityManager.TYPE_MOBILE);
+                }
+            }
+            if (!networkConnected) {
+                Toast.makeText(this, "Internet required for file sync (Wi-Fi or mobile data)", Toast.LENGTH_SHORT).show();
+                Log.w("SyncButton", "No internet connection, aborting file sync");
+                return;
+            }
             syncFilesWithCloud();
             runOnUiThread(() -> filesToSyncSection.setVisibility(View.VISIBLE));
         });
@@ -1175,24 +1212,25 @@ public class MainActivity extends AppCompatActivity {
 
 
     private void onMapDeviceButtonClicked() {
-        // Check Wi-Fi connectivity first
+        // Check Wi-Fi or mobile data connectivity (minimal change)
         android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        boolean wifiConnected = false;
+        boolean networkConnected = false;
         if (cm != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 android.net.Network nw = cm.getActiveNetwork();
                 if (nw != null) {
                     android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(nw);
-                    wifiConnected = nc != null && nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI);
+                    networkConnected = nc != null && (nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                        || nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR));
                 }
             } else {
                 android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
-                wifiConnected = ni != null && ni.isConnected() && ni.getType() == android.net.ConnectivityManager.TYPE_WIFI;
+                networkConnected = ni != null && ni.isConnected() && (ni.getType() == android.net.ConnectivityManager.TYPE_WIFI || ni.getType() == android.net.ConnectivityManager.TYPE_MOBILE);
             }
         }
-        if (!wifiConnected) {
-            Toast.makeText(this, "Wi-Fi required for mapping", Toast.LENGTH_SHORT).show();
-            Log.w("MapButton", "Wi-Fi not connected, aborting mapping dialog");
+        if (!networkConnected) {
+            Toast.makeText(this, "Internet required for mapping (Wi-Fi or mobile data)", Toast.LENGTH_SHORT).show();
+            Log.w("MapButton", "No internet connection, aborting mapping dialog");
             return;
         }
 
