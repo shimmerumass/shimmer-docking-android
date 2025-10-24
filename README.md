@@ -2,31 +2,39 @@
 
 ---
 
-
-
-
-
 ## Quick Navigation
 
-- [Overview](#1-overview)
-- [File Sync Details](#2-file-sync-details)
-- [Design Approach and Rationale](#3-design-approach-and-rationale)
-- [Features](#4-features)
-- [Architecture and Codebase](#5-architecture-and-codebase)
-- [Protocol Details](#6-protocol-details)
-- [Build and Setup](#7-build-and-setup)
-- [Permissions](#8-permissions)
-- [Usage Notes](#9-usage-notes)
-- [User Interface and Button Functions](#11-user-interface-and-button-functions)
-- [License](#12-license)
-- [Appendix](#13-appendix)
-    - [Protocol Details](#131-protocol-details)
+- [1. Overview](#1-overview)
+- [2. File Sync Details](#2-file-sync-details)
+- [3. Design Approach and Rationale](#3-design-approach-and-rationale)
+    - [3.1 Overnight Docking Protocol](#31-overnight-docking-protocol)
+    - [3.2 Device Ownership and Phone Lock State](#32-device-ownership-and-phone-lock-state)
+    - [3.3 Key Design Choices](#33-key-design-choices)
+- [4. Features](#4-features)
+- [5. Architecture and Codebase](#5-architecture-and-codebase)
+- [6. Protocol Details](#6-protocol-details)
+    - [6.1 Dock Query](#61-dock-query)
+    - [6.2 RTC64 Decoding](#62-rtc64-decoding)
+    - [6.3 File Header Stamping](#63-file-header-stamping)
+- [7. Build and Setup](#7-build-and-setup)
+- [8. Permissions](#8-permissions)
+- [9. Usage Notes](#9-usage-notes)
+- [11. User Interface and Button Functions](#11-user-interface-and-button-functions)
+    - [11.1 Overall Flow](#111-overall-flow)
+    - [11.2 Main Buttons](#112-main-buttons)
+    - [11.3 Status and Progress](#113-status-and-progress)
+    - [11.4 Main Screen Layout and Components](#114-main-screen-layout-and-components)
+    - [11.5 UI Component Mapping](#115-ui-component-mapping)
+    - [11.6 UI Flow and Interactions](#116-ui-flow-and-interactions)
+- [12. License](#12-license)
+- [13. Appendix](#13-appendix)
+    - [13.1 Protocol Details](#131-protocol-details)
         - [Docking Protocol](#docking-protocol)
         - [File Transfer Protocol](#file-transfer-protocol)
-    - [Codebase Map](#132-codebase-map)
+    - [13.2 Codebase Map](#132-codebase-map)
+    - [13.3 Docking Protocol: How It Works](#133-docking-protocol-how-it-works)
 
 ---
-
 
 ## 1. Overview
 
@@ -79,7 +87,7 @@ Shimmer Docking Android is a specialized application designed to automate the ni
 
 This app was designed for robust, unattended nightly operation in research and deployment settings where reliability and minimal user intervention are essential. The protocol is intentionally sequential and state-driven, with silent backoff and retry logic to avoid repeated failures and user disruption. Limiting the session to two devices ensures predictable resource usage and simplifies error handling, but this can be adjusted as needed.
 
-### Docking Protocol: Overnight Design and Scheduling
+### 3.1 Overnight Docking Protocol
 
 Docking is intended to occur overnight, typically within a configurable time window (e.g., 20:00 to 09:00). This ensures that data collection and transfer happen when devices are docked and users are not actively using them. The protocol is triggered automatically by scheduled alarms and can also be started manually via the UI.
 
@@ -94,7 +102,7 @@ This design allows the app to run the docking protocol automatically every night
 #### Manual Control: UI Button
 - **Start Docking Button**: Users can manually trigger the docking protocol at any time, outside the scheduled window, for troubleshooting or ad-hoc transfers. This provides flexibility while maintaining the reliability of the automatic overnight process.
 
-### Device Ownership and Phone Lock State
+### 3.2 Device Ownership and Phone Lock State
 
 Each Shimmer device is assigned to a specific owner (e.g., patient, research subject, or deployment asset). This ownership model ensures:
 - **Data integrity:** Files and metadata are always associated with the correct device and owner, reducing risk of mix-ups.
@@ -108,6 +116,8 @@ The protocol also considers the phone's lock state (whether the phone is locked 
     - Supports security and privacy by restricting access to patient/device data when the phone is locked.
 
 Phone lock state is checked before initiating transfer and sync actions. This design choice provides a reliable safeguard for data privacy and user control, and supports robust unattended operation by automating the decision to transfer only when the phone is unlocked and conditions are met.
+
+### 3.3 Key Design Choices
 
 Key design choices include:
 - **Stateful protocol:** Each step (scan, monitor, query, transfer, sync) is tracked and logged, allowing for recovery and troubleshooting.
@@ -144,17 +154,7 @@ The codebase is organized around several key classes and services:
 
 ### 6.1 Dock Query
 
-The Dock Query protocol is used to determine the docking state and timestamp of a Shimmer device. The Android app (via `DockingManager` and related services) sends a command to the device:
-
-- **Command:** 0xD5 (CHECK_DOCK_STATE)
-- **Response:** 0xD6 (RESPONSE_DOCK_STATE), followed by:
-    - 1 status byte (0 = undocked, 1 = docked)
-    - 8 bytes of RTC64 timestamp (device clock, little-endian)
-
-This exchange is handled by the `DockingManager` and `DockingService`, which monitor the device and log the docking state and timestamp for each session. The status byte is used to decide whether to proceed with file transfer.
-
-### 6.2 RTC64 Decoding
-
+The Dock Query protocol is used to determine the docking state and timestamp of a Shimmer device. The Android
 The RTC64 value is an 8-byte unsigned integer representing the device's clock ticks. It is sent in little-endian format and must be decoded for use in file headers and logs.
 
 - **Decoding:**
@@ -415,3 +415,36 @@ Key classes and responsibilities (located in `app/src/main/java/com/example/myap
 - `DockingTimestampModel`: Model for carrying `shimmerRtc64` and `androidRtc32` through the pipeline.
 
 Refer to these classes for implementation details and protocol logic.
+
+### Docking Protocol: How It Works
+
+The docking protocol is a multi-step, state-driven process designed for reliable overnight operation. It ensures that Shimmer devices are detected, monitored, and their data transferred with minimal user intervention. Here’s how it works:
+
+1. **Scheduled Start (Automatic or Manual):**
+   - At the configured overnight start time, `DockingStartReceiver` triggers the protocol automatically via an alarm. Alternatively, the user can start the protocol manually using the Start Docking button.
+
+2. **Device Scan:**
+   - The app scans for up to two Shimmer devices using Bluetooth. Devices matching the expected naming pattern are added to the processing queue.
+
+3. **Docking State Monitoring:**
+   - For each device, the app periodically checks its docking state by sending a Dock Query command (0xD5) and reading the response (0xD6, status byte, RTC64 timestamp).
+   - Only docked devices proceed to the next step.
+
+4. **File Transfer:**
+   - When a device is docked, the app initiates a Bluetooth RFCOMM connection and starts transferring data files using a chunked protocol. File headers are stamped with device and system timestamps for traceability.
+   - Transfer progress is shown in the UI.
+
+5. **Queue for Cloud Sync:**
+   - Transferred files are added to the sync queue. The app checks for network connectivity and uploads files to the configured S3 endpoint when possible.
+   - Sync status and progress are displayed.
+
+6. **Error Handling and Backoff:**
+   - If any step fails (e.g., device not found, Bluetooth off, transfer error), the app enters a silent backoff period before retrying. Errors and status are logged and shown in the UI.
+
+7. **Scheduled End:**
+   - At the configured end time, `DockingEndReceiver` gracefully terminates the protocol, finalizes transfers, and ensures all files are queued for sync.
+
+8. **Recovery and Reliability:**
+   - `BootCompletedReceiver` ensures alarms and scheduling persist after device reboot. All operations are logged for audit and troubleshooting.
+
+This protocol design ensures unattended, robust nightly operation, with manual controls available for troubleshooting or ad-hoc transfers.
