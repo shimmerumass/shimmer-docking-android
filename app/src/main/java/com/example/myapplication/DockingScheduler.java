@@ -36,8 +36,8 @@ public class DockingScheduler {
         int startHour = prefs.getInt("night_start_hour", 20); // default 8 PM
         int startMinute = prefs.getInt("night_start_minute", 0);
 
-        // End = start + 5 hours (minutes unchanged)
-        int endHour = (startHour + 5) % 24;
+        // End = start + 6 hours (minutes unchanged)
+        int endHour = (startHour + 6) % 24;
         int endMinute = startMinute;
 
         // Testing
