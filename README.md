@@ -1,5 +1,7 @@
 # Shimmer Sensor Docking & Data Sync App
 
+Automates nightly docking, data transfer, and cloud sync for Shimmer sensor devices. This README documents protocol, architecture, UI, and setup instructions.
+
 ## Quick Navigation
 
 - [Overview](#1-overview)
