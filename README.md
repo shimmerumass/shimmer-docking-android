@@ -149,7 +149,7 @@ The codebase is organized around several key classes and services:
 - **DockingTimestampModel**: Encapsulates the RTC values for each device and session.
 
 <p align="center"> 
- <img src="./architecture.png" width="900" height="300"> <br/>
+ <img src="./architecture.png" width="600" height="300"> <br/>
   <b>Figure: Shimmer Data Sync API Architecture</b>
 </p>
 
