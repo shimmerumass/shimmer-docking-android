@@ -1054,14 +1054,8 @@ public class MainActivity extends AppCompatActivity {
             "6. Adjust docking hours, toggle theme ☀️, or view app info ℹ️ using the top bar buttons.<br><br>" +
             "<b>Important Reminders:</b><br>" +
             "<b>• Do not remove the sensors until the transfer is complete.</b><br>" +
-            "<b>• Do not switch off the sensors during transfer.</b><br>" +
+            "<b>• Do not switch off the sensors during transfer or anytime in use unless specific information from specialists is provided.</b><br>" +
             "<b>• Always dock the sensors before your chosen window starts.</b><br><br>" +
-            "<b>Features:</b><br>" +
-            "- Automated scan, docking detection, file transfer, and cloud sync.<br>" +
-            "- Manual controls for transfer, sync, and device mapping.<br>" +
-            "- Real-time status, progress, and error reporting.<br>" +
-            "- Accessibility: Large buttons, high-contrast UI, and simple navigation.<br>" +
-            "- Designed for older adults, patients, and caregivers.<br><br>" +
             "For help, ask a caregiver or family member."
         ));
         aboutText.setPadding(32, 32, 32, 32);
