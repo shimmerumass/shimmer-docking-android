@@ -28,8 +28,6 @@
   - [Protocol Details](#131-protocol-details)
     - Docking Protocol
     - File Transfer Protocol
-  - [Codebase Map](#132-codebase-map)
-  - [Docking Protocol: How It Works](#133-docking-protocol-how-it-works)
 
 ---
 
