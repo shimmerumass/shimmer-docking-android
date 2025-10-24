@@ -26,8 +26,8 @@
 - [License](#12-license)
 - [Appendix](#13-appendix)
   - [Protocol Details](#131-protocol-details)
-    - Docking Protocol
-    - File Transfer Protocol
+    - [Docking Protocol](#docking-protocol)
+    - [File Transfer Protocol](#file-transfer-protocol)
 
 ---
 
