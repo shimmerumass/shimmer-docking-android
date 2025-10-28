@@ -556,13 +556,6 @@ public class MainActivity extends AppCompatActivity {
             }
             Log.d("MainActivity", "Docking button pressed");
 
-            // Stop ScanningService if running
-            // if (isScanningServiceRunning()) {
-            //     Log.d("MainActivity", "Stopping ScanningService before starting DockingService");
-            //     Intent stopScanIntent = new Intent(this, ScanningService.class);
-            //     stopService(stopScanIntent);
-            // }
-
             // Start DockingService
             Intent dockingIntent = new Intent(this, DockingService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -571,6 +564,20 @@ public class MainActivity extends AppCompatActivity {
                 startService(dockingIntent);
             }
         });
+
+        // --- End Docking button wiring ---
+        Button endDockingButton = findViewById(R.id.endDockingButton);
+        if (endDockingButton != null) {
+            endDockingButton.setOnClickListener(v -> {
+                Log.d("MainActivity", "End Docking button pressed");
+                Intent stopIntent = new Intent("com.example.myapplication.FORCE_STOP_DOCKING");
+                stopIntent.setPackage(getPackageName()); // Ensure broadcast is delivered to this app
+                sendBroadcast(stopIntent);
+                Toast.makeText(this, "Docking protocol ended", Toast.LENGTH_SHORT).show();
+            });
+        } else {
+            Log.w("MainActivity", "End Docking button not found in layout");
+        }
 
         // Shows the Android version in a Toast
         if (savedInstanceState == null) {
