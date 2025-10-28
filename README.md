@@ -313,9 +313,9 @@ The main UI is defined in `activity_main.xml` and is designed for clarity, acces
 - **File List (`fileListRecyclerView`)**: ListView showing files ready to sync.
 
 #### Action Buttons (Bottom Row)
-- **Start Transfer (`transferButton`)**: Initiates file transfer for selected/docked device.
 - **Sync to Cloud (`syncButton`)**: Uploads transferred files to cloud endpoint.
 - **Start Docking (`dockingButton`)**: Begins scan and monitoring protocol.
+- **End Docking (`endDockingButton`)**: Always visible; forcibly stops the docking protocol at any time.
 
 #### Docking Hours Section
 - **Docking Hours Text (`dockingHoursText`)**: Shows current docking hours window.
@@ -328,12 +328,12 @@ The main UI is defined in `activity_main.xml` and is designed for clarity, acces
 1. **Protocol Start**: User presses "Start Docking" or protocol starts automatically. Timer and status update; device scan begins.
 2. **Device Discovery**: Available devices appear in the list. Docking state is shown for each.
 3. **Docking State Monitoring**: When a device is docked, status updates and transfer becomes available.
-4. **File Transfer**: "Start Transfer" button is enabled; progress bar and text show transfer status.
-5. **Files to Sync**: After transfer, files appear in "Files to Sync" section. "Sync to Cloud" button is enabled if network is available.
-6. **Cloud Sync**: User presses "Sync to Cloud"; progress and results are shown. Synced files are removed from the list.
+4. **Files to Sync**: After transfer, files appear in "Files to Sync" section. "Sync to Cloud" button is enabled if network is available.
+5. **Cloud Sync**: User presses "Sync to Cloud"; progress and results are shown. Synced files are removed from the list.
+6. **End Docking**: User can press "End Docking" at any time to forcibly stop the docking protocol.
 7. **Additional Controls**: User can map devices, change docking hours, toggle theme, or view app info at any time.
 
-All status, errors, and progress are visible in real time. The UI is designed for minimal manual intervention, with most operations running automatically in the background.
+All status, errors, and progress are visible in real time. The UI is designed for minimal manual intervention, with most operations running automatically in the background. The End Docking button is always available for user control. The Start Transfer button is for extra/debug use and is hidden in normal workflow.
 
 
 ## 12. License
