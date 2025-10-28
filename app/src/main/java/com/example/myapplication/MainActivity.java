@@ -1051,20 +1051,24 @@ public class MainActivity extends AppCompatActivity {
         TextView aboutText = new TextView(this);
         aboutText.setText(android.text.Html.fromHtml(
             "<b>About Shimmer Sensor Docking & Data Sync App</b><br><br>" +
-            "This app automates nightly docking, data transfer, and secure cloud sync for Shimmer sensor devices. It is designed for research, clinical, and deployment environments where reliability and minimal user intervention are essential.<br><br>" +
+            "This app automates nightly docking, data transfer, and secure cloud sync for Shimmer sensor devices. It is designed for research with minimal user intervention. <br><br>" +
             "<b>How to Use:</b><br>" +
             "1. Ensure Bluetooth is enabled and permissions are granted.<br>" +
             "2. <b>Dock your Shimmer sensor(s) before the configured overnight window</b> (default: 8pm–9am). You can configure the window to suit your schedule.<br>" +
             "3. The app will automatically scan, detect, and transfer data from docked sensors.<br>" +
-            "4. Transferred files are listed in 'Files to Sync.'<br>" +
-            "5. Use 👤 button to associate sensors with your mobile device.<br>" +
-            "6. Adjust docking hours, toggle theme ☀️, or view app info ℹ️ using the top bar buttons.<br><br>" +
+            "4. Use 👤 button to associate sensors with your mobile device.<br>" +
+            "5. Toggle theme ☀️, or view app info ℹ️ using the top bar buttons.<br><br>" +
             "<b>Important Reminders:</b><br>" +
             "<b>• Do not remove the sensors until the transfer is complete.</b><br>" +
             "<b>• Do not switch off the sensors during transfer or anytime in use unless specific information from specialists is provided.</b><br>" +
             "<b>• Always dock the sensors before your chosen window starts.</b><br><br>" +
-            "For help, ask a caregiver or family member."
+            "For help, ask a caregiver or family member. <br><br>" +
+            "<b>Diagnostics:</b><br>" +
+            "<b>Only if instructed: </b> Use the `Start Docking` button to manually initiate the docking protocol and `End Docking` button to manually terminate the docking protocol. <br>" +
+            "Use the `Sync to Cloud` button to manually sync left over files to cloud.<br>" +
+            "These controls are primarily for troubleshooting and should not be used during normal operation.<br>"
         ));
+
         aboutText.setPadding(32, 32, 32, 32);
         aboutText.setTextSize(18f);
         scrollView.addView(aboutText);
