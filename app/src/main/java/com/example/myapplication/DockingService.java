@@ -223,10 +223,10 @@ public class DockingService extends Service implements DockingManager.DockingCal
     public void onDocked() {
         cancelRetry();
         String mac = null;
-        if (dockingManager != null && dockingManager.currentMac != null) {
-            mac = dockingManager.currentMac;
+        if (dockingManager != null) {
+            mac = dockingManager.getCurrentMac();
         }
-        String msg = (mac != null)
+        String msg = (mac != null && !mac.isEmpty())
             ? ("Shimmer " + mac + " docked. Preparing file transfer...")
             : "Shimmer docked. Preparing file transfer...";
         updateNotification(msg);
@@ -250,10 +250,10 @@ public class DockingService extends Service implements DockingManager.DockingCal
     public void onFileTransferStart() {
         cancelRetry();
         String mac = null;
-        if (dockingManager != null && dockingManager.currentMac != null) {
-            mac = dockingManager.currentMac;
+        if (dockingManager != null) {
+            mac = dockingManager.getCurrentMac();
         }
-        String msg = (mac != null) ? ("File transfer started for " + mac) : "File transfer started.";
+        String msg = (mac != null && !mac.isEmpty()) ? ("File transfer started for " + mac) : "File transfer started.";
         updateNotification(msg);
         sendDockingStatus(msg);
         // Notify UI that transfer started
