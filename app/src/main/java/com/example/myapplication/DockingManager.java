@@ -26,6 +26,12 @@ import java.util.concurrent.Executors;
 
 
 public class DockingManager {
+    /**
+     * Returns the MAC address of the Shimmer currently being processed/monitored, or null if none.
+     */
+    public String getCurrentMac() {
+        return shimmerMac;
+    }
     public interface DockingCallback {
         void onDocked();
         void onUndocked();
