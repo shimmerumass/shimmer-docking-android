@@ -222,8 +222,15 @@ public class DockingService extends Service implements DockingManager.DockingCal
     @Override
     public void onDocked() {
         cancelRetry();
-        updateNotification("Shimmer docked. Preparing file transfer...");
-        sendDockingStatus("Shimmer docked. Preparing file transfer...");
+        String mac = null;
+        if (dockingManager != null && dockingManager.currentMac != null) {
+            mac = dockingManager.currentMac;
+        }
+        String msg = (mac != null)
+            ? ("Shimmer " + mac + " docked. Preparing file transfer...")
+            : "Shimmer docked. Preparing file transfer...";
+        updateNotification(msg);
+        sendDockingStatus(msg);
     }
 
     @Override
@@ -242,12 +249,18 @@ public class DockingService extends Service implements DockingManager.DockingCal
     @Override
     public void onFileTransferStart() {
         cancelRetry();
-        updateNotification("File transfer started.");
-        sendDockingStatus("File transfer started.");
+        String mac = null;
+        if (dockingManager != null && dockingManager.currentMac != null) {
+            mac = dockingManager.currentMac;
+        }
+        String msg = (mac != null) ? ("File transfer started for " + mac) : "File transfer started.";
+        updateNotification(msg);
+        sendDockingStatus(msg);
         // Notify UI that transfer started
         try {
             Intent i = new Intent("com.example.myapplication.ACTION_TRANSFER_START");
             i.setPackage(getPackageName());
+            if (mac != null) i.putExtra("mac", mac);
             sendBroadcast(i);
         } catch (Exception ignored) {}
     }
