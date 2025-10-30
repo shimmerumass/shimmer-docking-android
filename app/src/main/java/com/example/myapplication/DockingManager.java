@@ -45,7 +45,7 @@ public class DockingManager {
     // Timing variables (can be set for testing)
     public long monitoringPhaseDurationMs = 1 * 60 * 1000; // 5 min
     public long scanPeriodMs = 20 * 1000; // 20 sec
-    public long scanDurationMs = 30 * 1000; // 30 sec
+    public long scanDurationMs = 60 * 1000; // 60 sec
     public long undockedTimeoutMs = 60 * 1000; // 1 min
     public long silentStateDurationMs = 60 * 1000; // 15 min
     public long waitBeforeTransferDuration = 60 * 1000; // wait between dock query and transfer connect
@@ -161,21 +161,38 @@ public class DockingManager {
             transferReceiversRegistered = false;
         }
         
-    private void processShimmerQueue() {
-        if (shimmerMacs.isEmpty()) {
-            Log.d(TAG, "All Shimmers processed. Protocol complete.");
-            protocolActive.set(false);
+private void processShimmerQueue() {
+    if (shimmerMacs.isEmpty()) {
+        int done = completedShimmers.size();
+
+        if (done < 2) {
+            Log.d(TAG, "Queue empty but only " + done + " Shimmer(s) completed — entering silent state to wait for next device...");
+            // Reuse existing silent logic (it will resume or rescan automatically)
+            enterSilentState();
             return;
         }
 
-        // Get next Shimmer from queue
-        String nextMac = shimmerMacs.iterator().next();
-        Log.d(TAG, "Round robin: processing Shimmer " + nextMac);
-        shimmerMac = nextMac;
-        
-        // Start periodic monitoring for this Shimmer with callback
-        startPeriodicMonitoringRoundRobin(nextMac, this::processShimmerQueue);
+        Log.d(TAG, "All Shimmers processed (" + done + "). Protocol complete.");
+        protocolActive.set(false);
+        return;
     }
+
+    // Queue not empty → process next Shimmer as usual
+    String nextMac = shimmerMacs.iterator().next();
+
+    // ✅ Skip already completed shimmer (avoid reprocessing)
+    if (completedShimmers.contains(nextMac)) {
+        Log.d(TAG, "Skipping already completed Shimmer in queue: " + nextMac);
+        shimmerMacs.remove(nextMac);
+        processShimmerQueue(); // move to next
+        return;
+    }
+
+    Log.d(TAG, "Round robin: processing Shimmer " + nextMac);
+    shimmerMac = nextMac;
+
+    startPeriodicMonitoringRoundRobin(nextMac, this::processShimmerQueue);
+}
 
     // Constructor continues below
 
@@ -560,6 +577,27 @@ public class DockingManager {
     // State 8: S3 File Sync
     private void startS3Sync() {
     Log.d(TAG, "Starting S3 file sync...");
+    // Minimal network connectivity check (WiFi or cellular)
+    android.net.ConnectivityManager cm = (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+    boolean networkConnected = false;
+    if (cm != null) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            android.net.Network nw = cm.getActiveNetwork();
+            if (nw != null) {
+                android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(nw);
+                networkConnected = nc != null && (nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                    || nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR));
+            }
+        } else {
+            android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
+            networkConnected = ni != null && ni.isConnected() && (ni.getType() == android.net.ConnectivityManager.TYPE_WIFI || ni.getType() == android.net.ConnectivityManager.TYPE_MOBILE);
+        }
+    }
+    if (!networkConnected) {
+        Log.w(TAG, "No internet connection, aborting S3 file sync");
+        sendDockingStatus("Internet required for file sync (Wi-Fi or mobile data)");
+        return;
+    }
     SyncService.startSyncService(context);
     }
 
