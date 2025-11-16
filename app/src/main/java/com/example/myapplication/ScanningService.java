@@ -36,12 +36,12 @@ public class ScanningService extends Service {
     private boolean isExtendedSearch = false;
     private boolean isScanning = false;
 
-    // Timer durations and sleep intervals:
-    private static final long SCAN_DURATION_MS = 15 * 1000;                 // 15 sec scan
-    private static final long SCAN_INTERVAL_MS = 2 * 60 * 1000;               // 2 min interval for extended search scans
-    private static final long EXTENDED_SEARCH_TOTAL_MS = 30 * 60 * 1000;      // total extended search period = 30 min
-    private static final long SLEEP_30_MIN_MS = 30 * 60 * 1000;               // sleep 30 minutes if device found
-    private static final long SLEEP_20_MIN_MS = 20 * 60 * 1000;               // sleep 20 minutes if no device found in extended search
+    // Timer durations and sleep intervals - aggressive scanning for Shimmer's 30sec/30min Bluetooth cycle:
+    private static final long SCAN_DURATION_MS = 90 * 1000;                  // 1.5 min scan (aggressive)
+    private static final long SCAN_INTERVAL_MS = 10 * 1000;                  // 10 sec break between scans
+    private static final long EXTENDED_SEARCH_TOTAL_MS = 60 * 60 * 1000;     // total extended search period = 1 hour
+    private static final long SLEEP_30_MIN_MS = 30 * 60 * 1000;              // sleep 30 minutes if ≥2 devices found
+    private static final long SLEEP_20_MIN_MS = 20 * 60 * 1000;              // sleep 20 minutes if <2 devices found after 1 hour
 
     private long scanStartTime = 0;
     private final Handler timerHandler = new Handler(Looper.getMainLooper());
@@ -398,21 +398,21 @@ public class ScanningService extends Service {
                 } else {
                     extendedSearchElapsed += SCAN_INTERVAL_MS;
                     if (extendedSearchElapsed >= EXTENDED_SEARCH_TOTAL_MS) {
-                        Log.d(TAG, "Extended search reached max duration. Sleeping for 20 minutes and resetting to initial scan.");
+                        Log.d(TAG, "Extended search reached max duration (1 hour). Sleeping for 20 minutes and resetting to initial scan.");
                         isExtendedSearch = false;
                         sleepThenRestart(SLEEP_20_MIN_MS);
                     } else {
-                        Log.d(TAG, "Extended search ongoing. Scheduling next scan after 2 minutes.");
+                        Log.d(TAG, "Extended search ongoing. Scheduling next scan after 20 seconds.");
                         scheduleNextScan();
                     }
                 }
         }
     }
 
-    // Schedule the next scan after a 2-minute interval.
+    // Schedule the next scan after a 20-second interval.
     private void scheduleNextScan() {
-        updateNotification("Waiting 2 minutes before next scan");
-        sendStatusUpdate("Waiting 2 minutes before next scan");
+        updateNotification("Waiting 20 seconds before next scan");
+        sendStatusUpdate("Waiting 20 seconds before next scan");
         Log.d(TAG, "Scheduling next scan in " + (SCAN_INTERVAL_MS / 1000) + " seconds");
         handler.postDelayed(() -> {
             // Double-check that the service is still active.
